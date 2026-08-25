@@ -72,21 +72,6 @@
         background: #2980b9; color: #fff;
       }
 
-      .traffic-legend {
-        position: absolute; right: 10px; bottom: 58px; z-index: 100;
-        display: none; align-items: center; gap: 6px; flex-wrap: wrap;
-        max-width: 250px; padding: 7px 9px; border-radius: 10px;
-        background: rgba(255,255,255,0.94); color: #4b5563;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        font: 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      }
-      .traffic-legend.open { display: flex; }
-      .traffic-legend.dark { background: rgba(40,40,50,0.94); color: #e5e7eb; }
-      .traffic-legend-title { font-weight: 700; margin-right: 2px; }
-      .traffic-legend-item { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
-      .traffic-legend-swatch { width: 16px; height: 5px; border-radius: 999px; display: inline-block; }
-
       .error-banner {
         position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
         background: #e74c3c; color: white; padding: 10px 20px; border-radius: 8px;
@@ -164,6 +149,20 @@
       }
       .favorite-toggle.is-favorite { color: #e74c3c; background: #fff5f4; }
       .favorite-toggle:hover { color: #e74c3c; }
+
+      .eta-button {
+        width: 100%; border: 1px solid #d8e2f0; border-radius: 8px;
+        background: #f5f8fc; color: #245b93; cursor: pointer;
+        font-size: 12px; font-weight: 600; padding: 6px 8px; margin-top: 5px;
+      }
+      .eta-button:hover { background: #e9f1fb; }
+      .eta-button:disabled { cursor: wait; opacity: 0.65; }
+      .eta-result {
+        margin-top: 5px; padding: 6px 8px; border-radius: 7px;
+        background: #eef6ff; color: #245b93; font-size: 11px; line-height: 1.45;
+      }
+      .eta-result.error { background: #fff4f2; color: #b33a32; }
+      .eta-result.loading { color: #667085; }
 
       .search-wrap {
         position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
@@ -323,7 +322,6 @@
     <div class="map-controls">
       <button id="btn-nearby" class="map-ctrl-btn" onclick="toggleNearbyPanel()" title="Nearest Available Parks">&#x1f4cd;</button>
       <button id="btn-favorites" class="map-ctrl-btn" onclick="toggleFavoritesPanel()" title="Favorite Parks">&#x2665;</button>
-      <button id="btn-traffic" class="map-ctrl-btn" onclick="toggleTrafficFlow()" title="Traffic Flow" aria-label="Traffic Flow">&#x1f6a6;</button>
       <button id="btn-heatmap" class="map-ctrl-btn" onclick="toggleHeatmap()" title="Occupancy Heatmap">&#x1f525;</button>
       <button id="btn-dark" class="map-ctrl-btn" onclick="toggleDarkMode()" title="Dark Mode">&#x1f319;</button>
     </div>
@@ -342,13 +340,6 @@
         <button class="nearby-close" onclick="toggleFavoritesPanel()">&times;</button>
       </div>
       <div id="favorites-list" class="nearby-list"></div>
-    </div>
-
-    <div id="traffic-legend" class="traffic-legend" aria-label="Traffic flow legend">
-      <span class="traffic-legend-title">Traffic</span>
-      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#25a244"></i>Free</span>
-      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#f2c94c"></i>Slow</span>
-      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#eb5757"></i>Heavy</span>
     </div>
 
     <div class="bottom-bar">
@@ -373,8 +364,7 @@
       const CLUSTER_ZOOM = 15;
       const DETAIL_PIN_ZOOM = 15;
       const FAVORITES_KEY = 'team-taipei:favorites:v1';
-      const TRAFFIC_SOURCE_ID = 'traffic-flow';
-      const TRAFFIC_LAYER_ID = 'traffic-flow-layer';
+      const ROUTING_URL = 'https://api.tomtom.com/routing/1/calculateRoute/';
 
       let map;
       let allCarParks = [];
@@ -384,6 +374,8 @@
       let descCache = { data: null, expires: 0 };
       let availCache = { data: null, expires: 0 };
       let favoriteIds = new Set();
+      let userLocation = null;
+      const etaCache = new Map();
 
       // Filter / display state
       let filterAvailable = false;
@@ -392,7 +384,6 @@
       let filterAccessible = false;
       let filterPregnancy = false;
       let showHeatmap = false;
-      let trafficEnabled = false;
       let darkMode = false;
 
       // --- Favorite parks ---
@@ -665,6 +656,12 @@
           h += tag('\uD83E\uDD30', cp.availablePregnancy, cp.pregnancyFirst, cp.availablePregnancy > 0 ? '#e91e9a' : '#95a5a6');
         h += '</div>';
 
+        const etaId = favoriteJsArg(cp.car_park_id);
+        h += '<button type="button" class="eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id) + '"'
+           + ' onclick="calculateEta(\'' + etaId + '\')">估算行車時間</button>';
+        h += '<div class="eta-result" data-eta-result-id="' + favoriteAttr(cp.car_park_id) + '"'
+           + ' aria-live="polite" style="display:none"></div>';
+
         // EV charging detail
         if (cp.chargeStation && cp.chargeStation.total > 0) {
           const cs = cp.chargeStation;
@@ -693,6 +690,100 @@
 
       function navigateTo(lat, lon) {
         window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lon + '&travelmode=driving', '_blank');
+      }
+
+      function getEtaElements(id) {
+        const key = String(id);
+        return {
+          buttons: [...document.querySelectorAll('.eta-button')]
+            .filter(el => el.dataset.etaButtonId === key),
+          results: [...document.querySelectorAll('.eta-result')]
+            .filter(el => el.dataset.etaResultId === key)
+        };
+      }
+
+      function formatDuration(seconds) {
+        const minutes = Math.max(1, Math.round(seconds / 60));
+        if (minutes < 60) return minutes + ' 分鐘';
+        const hours = Math.floor(minutes / 60);
+        const remainder = minutes % 60;
+        return hours + ' 小時' + (remainder ? ' ' + remainder + ' 分鐘' : '');
+      }
+
+      function formatEtaTime(timestamp) {
+        if (!timestamp) return '';
+        return new Date(timestamp).toLocaleTimeString('zh-TW', {
+          hour: '2-digit', minute: '2-digit'
+        });
+      }
+
+      function renderEtaMessage(id, message, type) {
+        const elements = getEtaElements(id);
+        elements.results.forEach(result => {
+          result.className = 'eta-result' + (type ? ' ' + type : '');
+          result.innerHTML = message;
+          result.style.display = 'block';
+        });
+      }
+
+      function renderEtaResult(id, eta) {
+        const arrival = formatEtaTime(eta.arrivalTime);
+        const arrivalText = arrival ? ' · 抵達 ' + arrival : '';
+        renderEtaMessage(id,
+          '開車約 <b>' + formatDuration(eta.travelTimeInSeconds) + '</b> · '
+          + formatDist(eta.lengthInMeters) + arrivalText, '');
+      }
+
+      async function calculateEta(id) {
+        const key = String(id);
+        const cp = carParkLookup[key];
+        const elements = getEtaElements(key);
+        if (!cp) return;
+        if (!userLocation) {
+          renderEtaMessage(key, '請先允許定位，才能估算目前位置到此停車場的時間。', 'error');
+          return;
+        }
+
+        const cacheKey = userLocation.lat.toFixed(4) + ',' + userLocation.lon.toFixed(4) + ':' + key;
+        const cached = etaCache.get(cacheKey);
+        if (cached && cached.expires > Date.now()) {
+          renderEtaResult(key, cached.data);
+          return;
+        }
+
+        elements.buttons.forEach(button => {
+          button.disabled = true;
+          button.textContent = '計算中…';
+        });
+        renderEtaMessage(key, '正在計算行車時間…', 'loading');
+
+        try {
+          const locations = userLocation.lat + ',' + userLocation.lon + ':' + cp.lat + ',' + cp.lon;
+          const url = ROUTING_URL + locations + '/json?travelMode=car&departAt=now&key='
+            + encodeURIComponent(API_KEY);
+          const response = await fetch(url);
+          if (!response.ok) throw new Error('Routing request failed: ' + response.status);
+          const payload = await response.json();
+          const summary = payload.routes && payload.routes[0] && payload.routes[0].summary;
+          if (!summary || !Number.isFinite(summary.travelTimeInSeconds)) {
+            throw new Error('No route summary returned');
+          }
+          const data = {
+            travelTimeInSeconds: summary.travelTimeInSeconds,
+            lengthInMeters: summary.lengthInMeters,
+            arrivalTime: summary.arrivalTime
+          };
+          etaCache.set(cacheKey, { data, expires: Date.now() + 120000 });
+          renderEtaResult(key, data);
+        } catch (err) {
+          console.error('ETA calculation failed:', err);
+          renderEtaMessage(key, '目前無法取得路線，請稍後再試。', 'error');
+        } finally {
+          elements.buttons.forEach(button => {
+            button.disabled = false;
+            button.textContent = '估算行車時間';
+          });
+        }
       }
 
       // --- Search ---
@@ -1060,63 +1151,6 @@
         });
       }
 
-      // --- Traffic flow layer ---
-      function setupTrafficFlowLayer() {
-        if (!map.getSource(TRAFFIC_SOURCE_ID)) {
-          map.addSource(TRAFFIC_SOURCE_ID, {
-            type: 'raster',
-            tiles: [
-              'https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?tileSize=256&key='
-                + encodeURIComponent(API_KEY)
-            ],
-            tileSize: 256,
-            attribution: '© TomTom'
-          });
-        }
-        if (!map.getLayer(TRAFFIC_LAYER_ID)) {
-          const before = map.getLayer('heatmap') ? 'heatmap'
-            : (map.getLayer('clusters') ? 'clusters' : undefined);
-          const layer = {
-            id: TRAFFIC_LAYER_ID,
-            type: 'raster',
-            source: TRAFFIC_SOURCE_ID,
-            minzoom: 0,
-            maxzoom: 22,
-            paint: {
-              'raster-opacity': 0.72,
-              'raster-fade-duration': 0
-            }
-          };
-          if (before) map.addLayer(layer, before);
-          else map.addLayer(layer);
-        }
-      }
-
-      function updateTrafficFlowUi() {
-        document.getElementById('btn-traffic').classList.toggle('active', trafficEnabled);
-        document.getElementById('traffic-legend').classList.toggle('open', trafficEnabled);
-        document.getElementById('traffic-legend').classList.toggle('dark', darkMode);
-      }
-
-      function toggleTrafficFlow() {
-        trafficEnabled = !trafficEnabled;
-        updateTrafficFlowUi();
-        if (!map) return;
-        try {
-          if (trafficEnabled) {
-            setupTrafficFlowLayer();
-            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'visible');
-          } else if (map.getLayer(TRAFFIC_LAYER_ID)) {
-            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'none');
-          }
-        } catch (err) {
-          console.error('Traffic flow setup failed:', err);
-          trafficEnabled = false;
-          updateTrafficFlowUi();
-          showError('Traffic flow is unavailable right now.');
-        }
-      }
-
       // --- Heatmap layer ---
       function setupHeatmapLayer() {
         if (!map.getSource('carparks-heat')) {
@@ -1166,7 +1200,6 @@
         document.getElementById('search-wrap').classList.toggle('dark', darkMode);
         document.getElementById('nearby-panel').classList.toggle('dark', darkMode);
         document.getElementById('favorites-panel').classList.toggle('dark', darkMode);
-        updateTrafficFlowUi();
 
         // Remove all DOM markers before style swap
         Object.values(carParkMarkerMap).forEach(m => m.remove());
@@ -1178,11 +1211,7 @@
         map.once('styledata', () => {
           if (allCarParks.length === 0) return;
           setupClusters();
-          if (trafficEnabled) setupTrafficFlowLayer();
           if (showHeatmap) setupHeatmapLayer();
-          if (trafficEnabled && map.getLayer(TRAFFIC_LAYER_ID)) {
-            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'visible');
-          }
           updateVisibleCarParks();
         });
       }
@@ -1284,16 +1313,28 @@
         }
       }
 
-      function initMap(lat, lng) {
+      function setUserLocation(coords) {
+        if (!coords || !Number.isFinite(coords.latitude) || !Number.isFinite(coords.longitude)) return;
+        userLocation = { lat: coords.latitude, lon: coords.longitude };
+        etaCache.clear();
+      }
+
+      function initMap(lat, lng, initialUserLocation = null) {
+        userLocation = initialUserLocation;
+        etaCache.clear();
         map = ParkingMapSDK.createMap({
           key: API_KEY, container: 'map',
           center: [lng, lat], zoom: 13, language: 'zh-TW'
         });
         map.addControl(new ParkingMapSDK.NavigationControl());
-        map.addControl(new ParkingMapSDK.GeolocateControl({
+        const geolocateControl = new ParkingMapSDK.GeolocateControl({
           positionOptions: { enableHighAccuracy: true },
           trackUserLocation: true, showUserLocation: true
-        }));
+        });
+        if (typeof geolocateControl.on === 'function') {
+          geolocateControl.on('geolocate', event => setUserLocation(event.coords));
+        }
+        map.addControl(geolocateControl);
 
         map.on('load', () => {
           setTimeout(() => { const b = document.querySelector('.maplibregl-ctrl-geolocate'); if (b) b.click(); }, 500);
@@ -1309,7 +1350,9 @@
         const dLat = 25.033, dLng = 121.565;
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
-            pos => initMap(pos.coords.latitude, pos.coords.longitude),
+            pos => initMap(pos.coords.latitude, pos.coords.longitude, {
+              lat: pos.coords.latitude, lon: pos.coords.longitude
+            }),
             () => initMap(dLat, dLng),
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
           );
