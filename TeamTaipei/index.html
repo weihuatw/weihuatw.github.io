@@ -371,6 +371,8 @@
       let filteredCarParks = [];
       let carParkLookup = {};
       let carParkMarkerMap = {};
+      let activeParkingPopup = null;
+      let activeParkingMarker = null;
       let descCache = { data: null, expires: 0 };
       let availCache = { data: null, expires: 0 };
       let favoriteIds = new Set();
@@ -576,6 +578,12 @@
         return 'critical';
       }
 
+      function closeActiveParkingPopup() {
+        if (activeParkingPopup) activeParkingPopup.remove();
+        activeParkingPopup = null;
+        activeParkingMarker = null;
+      }
+
       // --- Marker rendering ---
       function createCarParkMarker(cp) {
         const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
@@ -608,8 +616,19 @@
 
         const marker = new ParkingMapSDK.Marker({ element: el, anchor: 'bottom' }).setLngLat([cp.lon, cp.lat]);
         const popup = new ParkingMapSDK.Popup({ offset: [0, -40], maxWidth: '320px' }).setHTML(buildPopupHtml(cp));
-        popup.on('open', () => el.classList.add('is-selected'));
-        popup.on('close', () => el.classList.remove('is-selected'));
+        popup.on('open', () => {
+          if (activeParkingPopup && activeParkingPopup !== popup) closeActiveParkingPopup();
+          activeParkingPopup = popup;
+          activeParkingMarker = marker;
+          el.classList.add('is-selected');
+        });
+        popup.on('close', () => {
+          el.classList.remove('is-selected');
+          if (activeParkingPopup === popup) {
+            activeParkingPopup = null;
+            activeParkingMarker = null;
+          }
+        });
         marker.setPopup(popup);
         el.addEventListener('keydown', event => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -1006,6 +1025,7 @@
       function flyToPark(id) {
         const cp = carParkLookup[id];
         if (!cp) return;
+        closeActiveParkingPopup();
         // Close panel
         nearbyOpen = false;
         document.getElementById('nearby-panel').classList.remove('open');
@@ -1060,6 +1080,7 @@
         const heatSrc = map.getSource('carparks-heat');
         if (heatSrc) heatSrc.setData(buildHeatGeoJSON());
         // Recreate markers
+        closeActiveParkingPopup();
         Object.values(carParkMarkerMap).forEach(m => m.remove());
         carParkMarkerMap = {};
         updateVisibleCarParks();
@@ -1202,6 +1223,7 @@
         document.getElementById('favorites-panel').classList.toggle('dark', darkMode);
 
         // Remove all DOM markers before style swap
+        closeActiveParkingPopup();
         Object.values(carParkMarkerMap).forEach(m => m.remove());
         carParkMarkerMap = {};
 
@@ -1226,6 +1248,7 @@
 
       function updateVisibleCarParks() {
         if (filteredCarParks.length === 0 || map.getZoom() < CLUSTER_ZOOM) {
+          closeActiveParkingPopup();
           Object.values(carParkMarkerMap).forEach(m => m.remove());
           carParkMarkerMap = {};
           return;
@@ -1251,7 +1274,11 @@
           }
         });
         Object.keys(carParkMarkerMap).forEach(id => {
-          if (!visibleIds.has(id)) { carParkMarkerMap[id].remove(); delete carParkMarkerMap[id]; }
+          if (!visibleIds.has(id)) {
+            if (carParkMarkerMap[id] === activeParkingMarker) closeActiveParkingPopup();
+            carParkMarkerMap[id].remove();
+            delete carParkMarkerMap[id];
+          }
         });
         syncMarkerDensity();
       }
