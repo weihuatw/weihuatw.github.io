@@ -135,6 +135,20 @@
       .nearby-empty {
         padding: 20px 14px; text-align: center; color: #999; font-size: 13px;
       }
+      .favorite-remove {
+        flex: 0 0 auto; border: none; background: none; color: #e74c3c;
+        cursor: pointer; font-size: 18px; line-height: 1; padding: 3px;
+      }
+      .favorite-remove:hover { transform: scale(1.12); }
+
+      .favorite-toggle {
+        flex: 0 0 auto; border: 1px solid rgba(231,76,60,0.28);
+        border-radius: 999px; background: rgba(255,255,255,0.9);
+        color: #c5cbd3; cursor: pointer; font-size: 20px; line-height: 1;
+        min-width: 32px; min-height: 30px; padding: 2px 6px;
+      }
+      .favorite-toggle.is-favorite { color: #e74c3c; background: #fff5f4; }
+      .favorite-toggle:hover { color: #e74c3c; }
 
       .search-wrap {
         position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
@@ -293,6 +307,7 @@
 
     <div class="map-controls">
       <button id="btn-nearby" class="map-ctrl-btn" onclick="toggleNearbyPanel()" title="Nearest Available Parks">&#x1f4cd;</button>
+      <button id="btn-favorites" class="map-ctrl-btn" onclick="toggleFavoritesPanel()" title="Favorite Parks">&#x2665;</button>
       <button id="btn-heatmap" class="map-ctrl-btn" onclick="toggleHeatmap()" title="Occupancy Heatmap">&#x1f525;</button>
       <button id="btn-dark" class="map-ctrl-btn" onclick="toggleDarkMode()" title="Dark Mode">&#x1f319;</button>
     </div>
@@ -303,6 +318,14 @@
         <button class="nearby-close" onclick="toggleNearbyPanel()">&times;</button>
       </div>
       <div id="nearby-list" class="nearby-list"></div>
+    </div>
+
+    <div id="favorites-panel" class="nearby-panel">
+      <div class="nearby-header">
+        <span class="nearby-title">&#x2665; Favorite Parks</span>
+        <button class="nearby-close" onclick="toggleFavoritesPanel()">&times;</button>
+      </div>
+      <div id="favorites-list" class="nearby-list"></div>
     </div>
 
     <div class="bottom-bar">
@@ -325,7 +348,8 @@
       const DESC_TTL = 3600000;
       const AVAIL_TTL = 120000;
       const CLUSTER_ZOOM = 15;
-      const DETAIL_PIN_ZOOM = 17;
+      const DETAIL_PIN_ZOOM = 15;
+      const FAVORITES_KEY = 'team-taipei:favorites:v1';
 
       let map;
       let allCarParks = [];
@@ -334,6 +358,7 @@
       let carParkMarkerMap = {};
       let descCache = { data: null, expires: 0 };
       let availCache = { data: null, expires: 0 };
+      let favoriteIds = new Set();
 
       // Filter / display state
       let filterAvailable = false;
@@ -343,6 +368,57 @@
       let filterPregnancy = false;
       let showHeatmap = false;
       let darkMode = false;
+
+      // --- Favorite parks ---
+      function loadFavorites() {
+        try {
+          const saved = localStorage.getItem(FAVORITES_KEY);
+          const ids = saved ? JSON.parse(saved) : [];
+          if (Array.isArray(ids)) favoriteIds = new Set(ids.map(id => String(id)));
+        } catch (err) {
+          console.warn('Favorites are unavailable in this browser:', err);
+          favoriteIds = new Set();
+        }
+      }
+
+      function saveFavorites() {
+        try {
+          localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favoriteIds]));
+        } catch (err) {
+          console.warn('Unable to save favorites:', err);
+        }
+      }
+
+      function isFavorite(id) {
+        return favoriteIds.has(String(id));
+      }
+
+      function favoriteJsArg(id) {
+        return String(id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      }
+
+      function favoriteAttr(id) {
+        return String(id).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function toggleFavorite(id) {
+        const key = String(id);
+        if (favoriteIds.has(key)) favoriteIds.delete(key);
+        else favoriteIds.add(key);
+        saveFavorites();
+        document.querySelectorAll('.favorite-toggle').forEach(button => {
+          if (button.dataset.favoriteId === key) {
+            const active = favoriteIds.has(key);
+            button.classList.toggle('is-favorite', active);
+            button.textContent = active ? '\u2665' : '\u2661';
+            button.setAttribute('aria-pressed', String(active));
+            button.title = active ? 'Remove from favorites' : 'Add to favorites';
+          }
+        });
+        document.getElementById('btn-favorites').classList.toggle('active', favoriteIds.size > 0 && favoritesOpen);
+        if (favoritesOpen) buildFavoritesList();
+      }
 
       // --- TWD97 to WGS84 ---
       function twd97ToWgs84(e, n) {
@@ -541,6 +617,12 @@
         // Title row
         h += '<div style="display:flex;align-items:center;gap:6px">';
         h += '<b style="flex:1">\uD83C\uDD7F\uFE0F ' + esc(cp.name) + '</b>';
+        const favorite = isFavorite(cp.car_park_id);
+        h += '<button type="button" class="favorite-toggle' + (favorite ? ' is-favorite' : '') + '"'
+           + ' data-favorite-id="' + favoriteAttr(cp.car_park_id) + '"'
+           + ' aria-pressed="' + favorite + '" title="' + (favorite ? 'Remove from favorites' : 'Add to favorites') + '"'
+           + ' onclick="toggleFavorite(\'' + favoriteJsArg(cp.car_park_id) + '\')">'
+           + (favorite ? '\u2665' : '\u2661') + '</button>';
         h += '<span onclick="navigateTo(' + cp.lat + ',' + cp.lon + ')" '
            + 'style="cursor:pointer;user-select:none;display:inline-flex;align-items:center" title="Navigate">'
            + '<svg width="22" height="22" viewBox="0 0 1024 1024"><circle cx="512" cy="512" r="448" fill="#4D6BFF"/>'
@@ -697,6 +779,7 @@
 
       // --- Nearby panel ---
       let nearbyOpen = false;
+      let favoritesOpen = false;
 
       function haversine(lat1, lon1, lat2, lon2) {
         const R = 6371000;
@@ -712,11 +795,57 @@
 
       function toggleNearbyPanel() {
         nearbyOpen = !nearbyOpen;
+        if (nearbyOpen) {
+          favoritesOpen = false;
+          document.getElementById('favorites-panel').classList.remove('open');
+          document.getElementById('btn-favorites').classList.remove('active');
+        }
         const panel = document.getElementById('nearby-panel');
         document.getElementById('btn-nearby').classList.toggle('active', nearbyOpen);
         panel.classList.toggle('open', nearbyOpen);
         panel.classList.toggle('dark', darkMode);
         if (nearbyOpen) buildNearbyList();
+      }
+
+      function toggleFavoritesPanel() {
+        favoritesOpen = !favoritesOpen;
+        if (favoritesOpen) {
+          nearbyOpen = false;
+          document.getElementById('nearby-panel').classList.remove('open');
+          document.getElementById('btn-nearby').classList.remove('active');
+        }
+        const panel = document.getElementById('favorites-panel');
+        document.getElementById('btn-favorites').classList.toggle('active', favoritesOpen);
+        panel.classList.toggle('open', favoritesOpen);
+        panel.classList.toggle('dark', darkMode);
+        if (favoritesOpen) buildFavoritesList();
+      }
+
+      function buildFavoritesList() {
+        const listEl = document.getElementById('favorites-list');
+        const parks = allCarParks.filter(cp => isFavorite(cp.car_park_id))
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+        if (parks.length === 0) {
+          listEl.innerHTML = '<div class="nearby-empty">點開停車場後按愛心，就能加入最愛。</div>';
+          return;
+        }
+
+        const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        listEl.innerHTML = parks.map(cp => {
+          const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+          const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
+          const color = getColor(avail, total);
+          const id = favoriteJsArg(cp.car_park_id);
+          return '<div class="nearby-item" onclick="flyToPark(\'' + id + '\')">'
+            + '<span class="nearby-dot" style="background:' + color + '"></span>'
+            + '<div class="nearby-info">'
+            + '<div class="nearby-name">' + esc(cp.name) + '</div>'
+            + '<div class="nearby-meta">' + (avail >= 0 ? avail + '/' + total + ' available' : 'Availability unknown') + '</div>'
+            + '</div>'
+            + '<button type="button" class="favorite-remove" aria-label="Remove from favorites"'
+            + ' onclick="event.stopPropagation();toggleFavorite(\'' + id + '\')">&#x2665;</button>'
+            + '</div>';
+        }).join('');
       }
 
       function buildNearbyList() {
@@ -952,6 +1081,8 @@
         darkMode = !darkMode;
         document.getElementById('btn-dark').classList.toggle('active', darkMode);
         document.getElementById('search-wrap').classList.toggle('dark', darkMode);
+        document.getElementById('nearby-panel').classList.toggle('dark', darkMode);
+        document.getElementById('favorites-panel').classList.toggle('dark', darkMode);
 
         // Remove all DOM markers before style swap
         Object.values(carParkMarkerMap).forEach(m => m.remove());
@@ -1040,6 +1171,8 @@
       }
 
       // --- Init ---
+      loadFavorites();
+
       async function loadData() {
         try {
           const [descParks, availMap] = await Promise.all([fetchDescriptions(), fetchAvailability()]);
