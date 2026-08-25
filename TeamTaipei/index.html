@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Taipei Car Parks - Live Availability</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <link rel="stylesheet" type="text/css" href="assets/tomtom-map-sdk.css" />
+    <style>
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
+      #map { width: 100vw; height: 100vh; }
+
+      .loading-overlay {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(255, 255, 255, 0.9);
+        display: flex; flex-direction: column; justify-content: center; align-items: center;
+        z-index: 1000;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .loading-overlay.hidden { display: none; }
+      .spinner {
+        width: 50px; height: 50px;
+        border: 4px solid #f3f3f3; border-top: 4px solid #3498db;
+        border-radius: 50%; animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+      .bottom-bar {
+        position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+        display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        z-index: 100; max-width: 95%;
+      }
+      .status-bar {
+        background: rgba(255,255,255,0.92); border-radius: 18px;
+        padding: 6px 14px; font-size: 12px; color: #555;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        display: flex; align-items: center; gap: 8px;
+        white-space: nowrap;
+      }
+      .refresh-btn {
+        background: none; border: none; cursor: pointer; font-size: 16px;
+        padding: 0 2px; line-height: 1;
+      }
+      .refresh-btn:active { transform: scale(0.9); }
+      .filter-toggle {
+        background: rgba(255,255,255,0.92); border-radius: 18px;
+        padding: 5px 10px; font-size: 11px; color: #555;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        border: 2px solid transparent; cursor: pointer;
+        white-space: nowrap; user-select: none;
+        transition: background 0.2s, border-color 0.2s, color 0.2s;
+      }
+      .filter-toggle.active {
+        background: #2980b9; color: #fff; border-color: #2980b9;
+      }
+
+      .map-controls {
+        position: absolute; top: 10px; left: 10px;
+        display: flex; flex-direction: column; gap: 6px; z-index: 100;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .map-ctrl-btn {
+        width: 36px; height: 36px; border-radius: 8px;
+        background: rgba(255,255,255,0.92); border: none;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        cursor: pointer; font-size: 18px; line-height: 1;
+        display: flex; align-items: center; justify-content: center;
+        transition: background 0.2s;
+      }
+      .map-ctrl-btn.active {
+        background: #2980b9; color: #fff;
+      }
+
+      .error-banner {
+        position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+        background: #e74c3c; color: white; padding: 10px 20px; border-radius: 8px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 13px; z-index: 1000; max-width: 90%; text-align: center;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3); display: none;
+      }
+
+      .socket-row {
+        display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px;
+      }
+      .socket-dot {
+        width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15);
+        cursor: default;
+      }
+
+      .nearby-panel {
+        position: absolute; bottom: 56px; left: 50%; transform: translateX(-50%);
+        width: 340px; max-width: 92%; max-height: 45vh;
+        background: rgba(255,255,255,0.97); border-radius: 14px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.25); z-index: 200;
+        overflow: hidden; display: none;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      }
+      .nearby-panel.dark { background: rgba(40,40,50,0.97); color: #eee; }
+      .nearby-panel.open { display: flex; flex-direction: column; }
+      .nearby-header {
+        display: flex; align-items: center; padding: 10px 14px 6px;
+        border-bottom: 1px solid rgba(0,0,0,0.08);
+      }
+      .nearby-panel.dark .nearby-header { border-bottom-color: rgba(255,255,255,0.1); }
+      .nearby-title { flex: 1; font-size: 14px; font-weight: 700; }
+      .nearby-close {
+        background: none; border: none; font-size: 20px; cursor: pointer;
+        color: #888; padding: 0 4px; line-height: 1;
+      }
+      .nearby-list {
+        overflow-y: auto; padding: 4px 0; flex: 1;
+        -webkit-overflow-scrolling: touch;
+      }
+      .nearby-item {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 14px; cursor: pointer;
+        transition: background 0.15s;
+      }
+      .nearby-item:hover { background: rgba(0,0,0,0.04); }
+      .nearby-panel.dark .nearby-item:hover { background: rgba(255,255,255,0.06); }
+      .nearby-dot {
+        width: 14px; height: 14px; min-width: 14px;
+        border-radius: 50%; border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+      }
+      .nearby-info { flex: 1; min-width: 0; }
+      .nearby-name {
+        font-size: 13px; font-weight: 600;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .nearby-meta { font-size: 11px; color: #888; margin-top: 1px; }
+      .nearby-panel.dark .nearby-meta { color: #aaa; }
+      .nearby-empty {
+        padding: 20px 14px; text-align: center; color: #999; font-size: 13px;
+      }
+
+      .search-wrap {
+        position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+        z-index: 150; width: 320px; max-width: 70%;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .search-bar {
+        display: flex; align-items: center;
+        background: rgba(255,255,255,0.97); border-radius: 24px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+        padding: 0 6px 0 14px; height: 40px;
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      }
+      .search-wrap.dark .search-bar { background: rgba(40,40,50,0.97); color: #eee; }
+      .search-bar input {
+        flex: 1; border: none; outline: none; background: transparent;
+        font-size: 14px; color: inherit; min-width: 0;
+      }
+      .search-bar input::placeholder { color: #aaa; }
+      .search-wrap.dark .search-bar input::placeholder { color: #777; }
+      .search-clear {
+        background: none; border: none; font-size: 18px; cursor: pointer;
+        color: #999; padding: 4px 6px; line-height: 1; display: none;
+      }
+      .search-clear.visible { display: block; }
+      .search-results {
+        margin-top: 6px; border-radius: 14px;
+        background: rgba(255,255,255,0.97); box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+        overflow: hidden; display: none;
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        max-height: 50vh; overflow-y: auto;
+      }
+      .search-wrap.dark .search-results { background: rgba(40,40,50,0.97); color: #eee; }
+      .search-results.open { display: block; }
+      .search-result-item {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 14px; cursor: pointer; transition: background 0.15s;
+      }
+      .search-result-item:hover { background: rgba(0,0,0,0.04); }
+      .search-wrap.dark .search-result-item:hover { background: rgba(255,255,255,0.06); }
+      .search-result-icon {
+        width: 28px; height: 28px; min-width: 28px; border-radius: 50%;
+        background: #3498db; color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 14px;
+      }
+      .search-result-info { flex: 1; min-width: 0; }
+      .search-result-name {
+        font-size: 13px; font-weight: 600;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .search-result-addr {
+        font-size: 11px; color: #888; margin-top: 1px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .search-wrap.dark .search-result-addr { color: #aaa; }
+      .search-result-dist {
+        font-size: 11px; color: #888; white-space: nowrap;
+      }
+      .search-loading {
+        padding: 14px; text-align: center; color: #999; font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="loading" class="loading-overlay">
+      <div class="spinner"></div>
+      <div>Loading Taipei car parks...</div>
+    </div>
+    <div id="error-banner" class="error-banner"></div>
+
+    <div id="search-wrap" class="search-wrap">
+      <div class="search-bar">
+        <input id="search-input" type="text" placeholder="Search places..." autocomplete="off"
+               oninput="onSearchInput()" onkeydown="onSearchKey(event)" />
+        <button id="search-clear" class="search-clear" onclick="clearSearch()">&times;</button>
+      </div>
+      <div id="search-results" class="search-results"></div>
+    </div>
+
+    <div class="map-controls">
+      <button id="btn-nearby" class="map-ctrl-btn" onclick="toggleNearbyPanel()" title="Nearest Available Parks">&#x1f4cd;</button>
+      <button id="btn-heatmap" class="map-ctrl-btn" onclick="toggleHeatmap()" title="Occupancy Heatmap">&#x1f525;</button>
+      <button id="btn-dark" class="map-ctrl-btn" onclick="toggleDarkMode()" title="Dark Mode">&#x1f319;</button>
+    </div>
+
+    <div id="nearby-panel" class="nearby-panel">
+      <div class="nearby-header">
+        <span class="nearby-title">&#x1f4cd; Nearest Available</span>
+        <button class="nearby-close" onclick="toggleNearbyPanel()">&times;</button>
+      </div>
+      <div id="nearby-list" class="nearby-list"></div>
+    </div>
+
+    <div class="bottom-bar">
+      <button id="toggle-available" class="filter-toggle" onclick="toggleFilter('available')">Available</button>
+      <button id="toggle-charging" class="filter-toggle" onclick="toggleFilter('charging')">&#x26a1; Charging</button>
+      <button id="toggle-motorcycle" class="filter-toggle" onclick="toggleFilter('motorcycle')">&#x1f3cd;&#xfe0f; Motorcycle</button>
+      <button id="toggle-accessible" class="filter-toggle" onclick="toggleFilter('accessible')">&#x267f; Accessible</button>
+      <button id="toggle-pregnancy" class="filter-toggle" onclick="toggleFilter('pregnancy')">&#x1f930; Pregnancy</button>
+      <div class="status-bar">
+        <span id="status-text">Loading...</span>
+        <button class="refresh-btn" onclick="refreshAvailability()" title="Refresh now">&#x21bb;</button>
+      </div>
+    </div>
+
+    <script type="module" src="assets/tomtom-map-sdk.js?v=0.51.3-raster2"></script>
+    <script>
+      const API_KEY = 'mxLTSlo2po4kpp4JfGNGr8a1OQoj6fUz';
+      const DESC_URL = 'https://tcgbusfs.blob.core.windows.net/blobtcmsv/TCMSV_alldesc.json';
+      const AVAIL_URL = 'https://tcgbusfs.blob.core.windows.net/blobtcmsv/TCMSV_allavailable.json';
+      const DESC_TTL = 3600000;
+      const AVAIL_TTL = 120000;
+      const CLUSTER_ZOOM = 15;
+
+      let map;
+      let allCarParks = [];
+      let filteredCarParks = [];
+      let carParkLookup = {};
+      let carParkMarkerMap = {};
+      let descCache = { data: null, expires: 0 };
+      let availCache = { data: null, expires: 0 };
+
+      // Filter / display state
+      let filterAvailable = false;
+      let filterCharging = false;
+      let showMotorcycle = false;
+      let filterAccessible = false;
+      let filterPregnancy = false;
+      let showHeatmap = false;
+      let darkMode = false;
+
+      // --- TWD97 to WGS84 ---
+      function twd97ToWgs84(e, n) {
+        const a = 6378137.0, f = 1 / 298.257222101, k0 = 0.9999;
+        const lon0 = 121.0 * Math.PI / 180, e0 = 250000, n0 = 0;
+        const e2 = 2 * f - f * f;
+        const e1 = (1 - Math.sqrt(1 - e2)) / (1 + Math.sqrt(1 - e2));
+        const x = e - e0, y = n - n0;
+        const m = y / k0;
+        const mu = m / (a * (1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256));
+        let phi1 = mu + (3*e1/2 - 27*Math.pow(e1,3)/32) * Math.sin(2*mu);
+        phi1 += (21*e1*e1/16 - 55*Math.pow(e1,4)/32) * Math.sin(4*mu);
+        phi1 += (151*Math.pow(e1,3)/96) * Math.sin(6*mu);
+        phi1 += (1097*Math.pow(e1,4)/512) * Math.sin(8*mu);
+        const c1 = e2 * Math.cos(phi1)*Math.cos(phi1) / (1 - e2);
+        const t1 = Math.tan(phi1) * Math.tan(phi1);
+        const n1 = a / Math.sqrt(1 - e2 * Math.sin(phi1)*Math.sin(phi1));
+        const r1 = a * (1 - e2) / Math.pow(1 - e2 * Math.sin(phi1)*Math.sin(phi1), 1.5);
+        const d = x / (n1 * k0);
+        const lat = phi1 - (n1 * Math.tan(phi1) / r1) * (d*d/2 - (5 + 3*t1 + 10*c1 - 4*c1*c1 - 9*e2/(1-e2)) * Math.pow(d,4)/24);
+        const lon = lon0 + (d - (1 + 2*t1 + c1) * Math.pow(d,3)/6 + (5 - 2*c1 + 28*t1 - 3*c1*c1 + 8*e2/(1-e2) + 24*t1*t1) * Math.pow(d,5)/120) / Math.cos(phi1);
+        return { lat: lat * 180 / Math.PI, lon: lon * 180 / Math.PI };
+      }
+
+      // --- Data fetching ---
+      async function fetchDescriptions() {
+        const now = Date.now();
+        if (descCache.data && now < descCache.expires) return descCache.data;
+        const resp = await fetch(DESC_URL);
+        const raw = await resp.json();
+        const parks = (raw.data || {}).park || [];
+        descCache.data = parks;
+        descCache.expires = now + DESC_TTL;
+        console.log(`Fetched ${parks.length} Taipei car park descriptions`);
+        return parks;
+      }
+
+      async function fetchAvailability() {
+        const now = Date.now();
+        if (availCache.data && now < availCache.expires) return availCache.data;
+        const resp = await fetch(AVAIL_URL);
+        const raw = await resp.json();
+        const parks = (raw.data || {}).park || [];
+        const availMap = {};
+        for (const p of parks) {
+          const entry = {
+            availablecar: p.availablecar != null ? p.availablecar : -1,
+            availablemotor: p.availablemotor != null ? p.availablemotor : -1,
+            availablehandicap: p.availablehandicap != null ? p.availablehandicap : -1,
+            availablepregnancy: p.availablepregnancy != null ? p.availablepregnancy : -1,
+          };
+          if (entry.availablecar === -9) entry.availablecar = -1;
+          if (entry.availablemotor === -9) entry.availablemotor = -1;
+          if (entry.availablehandicap === -9) entry.availablehandicap = -1;
+          if (entry.availablepregnancy === -9) entry.availablepregnancy = -1;
+          const cs = p.ChargeStation;
+          if (cs && typeof cs === 'object') {
+            const sockets = cs.scoketStatusList || [];
+            if (sockets.length > 0) {
+              entry.chargeStation = {
+                total: sockets.length,
+                available: sockets.filter(s => s.spot_status === '\u5f85\u6a5f\u4e2d').length,
+                sockets: sockets
+              };
+            }
+          }
+          availMap[p.id] = entry;
+        }
+        availCache.data = availMap;
+        availCache.expires = now + AVAIL_TTL;
+        console.log(`Fetched availability for ${Object.keys(availMap).length} parks`);
+        return availMap;
+      }
+
+      // --- Data merging ---
+      function mergeParks(descParks, availMap) {
+        const result = [];
+        for (const p of descParks) {
+          const parkId = p.id || '';
+          let lat = null, lon = null;
+          const entrance = p.EntranceCoord;
+          if (entrance && typeof entrance === 'object') {
+            const coordsList = entrance.EntrancecoordInfo;
+            if (Array.isArray(coordsList) && coordsList.length > 0) {
+              const first = coordsList[0];
+              const x = parseFloat(first.Xcod), y = parseFloat(first.Ycod);
+              if (x > 1 && y > 1) { lat = x; lon = y; }
+            }
+          }
+          if (lat === null || lon === null) {
+            const tw97x = parseFloat(p.tw97x), tw97y = parseFloat(p.tw97y);
+            if (tw97x > 100000 && tw97y > 2000000) {
+              const wgs = twd97ToWgs84(tw97x, tw97y);
+              lat = wgs.lat; lon = wgs.lon;
+            } else { continue; }
+          }
+
+          const avail = availMap[parkId] || {};
+          const entry = {
+            car_park_id: parkId,
+            name: p.name || '',
+            lat, lon,
+            totalSpaces: parseInt(p.totalcar) || 0,
+            availableSpaces: avail.availablecar != null ? avail.availablecar : -1,
+            totalMotor: parseInt(p.totalmotor) || 0,
+            availableMotor: avail.availablemotor != null ? avail.availablemotor : -1,
+            handicapFirst: parseInt(p.Handicap_First) || 0,
+            availableHandicap: avail.availablehandicap != null ? avail.availablehandicap : -1,
+            pregnancyFirst: parseInt(p.Pregnancy_First) || 0,
+            availablePregnancy: avail.availablepregnancy != null ? avail.availablepregnancy : -1,
+            payex: p.payex || '',
+            address: p.address || '',
+          };
+          if (entry.availableSpaces === -9) entry.availableSpaces = -1;
+          if (entry.availableMotor === -9) entry.availableMotor = -1;
+          if (avail.chargeStation) entry.chargeStation = avail.chargeStation;
+          result.push(entry);
+        }
+        return result;
+      }
+
+      // --- Color logic ---
+      function getColor(avail, total) {
+        if (avail < 0 || total <= 0) return '#95a5a6';
+        if (avail === 0) return '#c0392b';
+        const ratio = avail / total;
+        if (ratio > 0.5) return '#27ae60';
+        if (ratio > 0.25) return '#f39c12';
+        return '#e74c3c';
+      }
+
+      // --- Marker rendering ---
+      function createCarParkMarker(cp) {
+        const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
+        const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+        const color = getColor(avail, total);
+        const displayText = avail >= 0 ? (avail > 999 ? '999+' : avail) : '?';
+        const fontSize = String(displayText).length > 2 ? 10 : 12;
+        const hasCharging = cp.chargeStation && cp.chargeStation.total > 0;
+
+        const el = document.createElement('div');
+        el.style.cssText = 'width:36px;height:46px;cursor:pointer;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));';
+        let svgExtra = '';
+        if (hasCharging && !showMotorcycle) {
+          svgExtra = '<circle cx="30" cy="8" r="7" fill="#FFD700" stroke="white" stroke-width="1.5"/>'
+                   + '<text x="30" y="11" text-anchor="middle" font-size="10" font-family="Arial,sans-serif">\u26a1</text>';
+        }
+        if (showMotorcycle) {
+          svgExtra = '<circle cx="30" cy="8" r="7" fill="#8e44ad" stroke="white" stroke-width="1.5"/>'
+                   + '<text x="30" y="12" text-anchor="middle" font-size="9" font-family="Arial,sans-serif">\uD83C\uDFCD</text>';
+        }
+        el.innerHTML = '<svg width="36" height="46" viewBox="0 0 36 46" xmlns="http://www.w3.org/2000/svg">'
+            + '<path d="M18 46 C18 46 5 28 5 18 A13 13 0 1 1 31 18 C31 28 18 46 18 46Z" fill="' + color + '" stroke="white" stroke-width="2"/>'
+            + '<text x="18" y="20" text-anchor="middle" fill="white" font-size="' + fontSize + '" font-weight="bold" font-family="Arial,sans-serif">' + displayText + '</text>'
+            + svgExtra + '</svg>';
+
+        const marker = new ParkingMapSDK.Marker({ element: el, anchor: 'bottom' }).setLngLat([cp.lon, cp.lat]);
+        marker.setPopup(new ParkingMapSDK.Popup({ offset: [0, -46], maxWidth: '320px' }).setHTML(buildPopupHtml(cp)));
+        return marker;
+      }
+
+      function buildPopupHtml(cp) {
+        const esc = s => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const tag = (label, avail, total, color) => {
+          if (total <= 0) return '';
+          const a = avail >= 0 ? avail : '?';
+          return '<span style="display:inline-flex;align-items:center;gap:2px;background:' + color + ';color:#fff;'
+               + 'border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600">'
+               + label + ' ' + a + '/' + total + '</span>';
+        };
+
+        let h = '<div style="padding:4px;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,sans-serif">';
+        // Title row
+        h += '<div style="display:flex;align-items:center;gap:6px">';
+        h += '<b style="flex:1">\uD83C\uDD7F\uFE0F ' + esc(cp.name) + '</b>';
+        h += '<span onclick="navigateTo(' + cp.lat + ',' + cp.lon + ')" '
+           + 'style="cursor:pointer;user-select:none;display:inline-flex;align-items:center" title="Navigate">'
+           + '<svg width="22" height="22" viewBox="0 0 1024 1024"><circle cx="512" cy="512" r="448" fill="#4D6BFF"/>'
+           + '<path d="M416 605c1.2.6 2.2 1.5 2.7 2.7l82.3 175.7c3.2 6.8 12.8 7 15.8.4L718.6 318c3.6-8.2-4.8-16.5-12.9-12.9L240 507c-6.8 2.9-6.6 12.6.4 15.8L416 605z" fill="#fff"/>'
+           + '</svg></span></div>';
+
+        // Tags row
+        h += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin:4px 0">';
+        h += tag('\uD83D\uDE97', cp.availableSpaces, cp.totalSpaces, getColor(cp.availableSpaces, cp.totalSpaces));
+        h += tag('\uD83C\uDFCD\uFE0F', cp.availableMotor, cp.totalMotor, getColor(cp.availableMotor, cp.totalMotor));
+        if (cp.handicapFirst > 0)
+          h += tag('\u267F', cp.availableHandicap, cp.handicapFirst, cp.availableHandicap > 0 ? '#2980b9' : '#95a5a6');
+        if (cp.pregnancyFirst > 0)
+          h += tag('\uD83E\uDD30', cp.availablePregnancy, cp.pregnancyFirst, cp.availablePregnancy > 0 ? '#e91e9a' : '#95a5a6');
+        h += '</div>';
+
+        // EV charging detail
+        if (cp.chargeStation && cp.chargeStation.total > 0) {
+          const cs = cp.chargeStation;
+          h += '<div style="font-size:12px;color:#e67e22">\u26a1 Charging: '
+             + cs.available + ' / ' + cs.total + ' available</div>';
+          if (cs.sockets && cs.sockets.length > 0) {
+            h += '<div class="socket-row">';
+            for (const sk of cs.sockets) {
+              const isAvail = sk.spot_status === '\u5f85\u6a5f\u4e2d';
+              const bg = isAvail ? '#27ae60' : '#e74c3c';
+              const label = (sk.spot_abrv || '').split('-').pop() || '?';
+              const statusText = isAvail ? 'Available' : sk.spot_status;
+              h += '<span class="socket-dot" style="background:' + bg + '" title="' + esc(label) + ': ' + esc(statusText) + '"></span>';
+            }
+            h += '</div>';
+          }
+        }
+
+        // Payment
+        if (cp.payex) {
+          h += '<div style="color:#666;font-size:11px;margin-top:2px">\uD83D\uDCB0 ' + esc(cp.payex) + '</div>';
+        }
+        h += '</div>';
+        return h;
+      }
+
+      function navigateTo(lat, lon) {
+        window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lon + '&travelmode=driving', '_blank');
+      }
+
+      // --- Search ---
+      const SEARCH_URL = 'https://api.tomtom.com/search/2/search/';
+      let searchDebounce = null;
+      let searchMarker = null;
+
+      function onSearchInput() {
+        const q = document.getElementById('search-input').value.trim();
+        document.getElementById('search-clear').classList.toggle('visible', q.length > 0);
+        clearTimeout(searchDebounce);
+        if (q.length < 2) { closeSearchResults(); return; }
+        // Show loading
+        const res = document.getElementById('search-results');
+        res.innerHTML = '<div class="search-loading">Searching...</div>';
+        res.classList.add('open');
+        searchDebounce = setTimeout(() => doSearch(q), 300);
+      }
+
+      function onSearchKey(e) {
+        if (e.key === 'Escape') {
+          closeSearchResults();
+          document.getElementById('search-input').blur();
+        }
+      }
+
+      async function doSearch(query) {
+        try {
+          const center = map.getCenter();
+          const url = SEARCH_URL + encodeURIComponent(query) + '.json?key=' + API_KEY
+            + '&lat=' + center.lat + '&lon=' + center.lng
+            + '&countrySet=TW&language=zh-TW&limit=8&typeahead=true';
+          const resp = await fetch(url);
+          const data = await resp.json();
+          renderSearchResults(data.results || [], center);
+        } catch (err) {
+          console.error('Search failed:', err);
+          document.getElementById('search-results').innerHTML =
+            '<div class="search-loading">Search failed.</div>';
+        }
+      }
+
+      function renderSearchResults(results, center) {
+        const res = document.getElementById('search-results');
+        if (results.length === 0) {
+          res.innerHTML = '<div class="search-loading">No results found.</div>';
+          return;
+        }
+        const esc = s => (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        res.innerHTML = results.map((r, i) => {
+          const name = r.poi ? r.poi.name : (r.address ? r.address.freeformAddress : 'Unknown');
+          const addr = r.address ? r.address.freeformAddress : '';
+          const pos = r.position;
+          const dist = haversine(center.lat, center.lng, pos.lat, pos.lon);
+          const icon = r.poi ? '\uD83D\uDCCD' : '\uD83C\uDF10';
+          return '<div class="search-result-item" onclick="selectSearchResult(' + i + ')" data-lat="'
+            + pos.lat + '" data-lon="' + pos.lon + '">'
+            + '<div class="search-result-icon">' + icon + '</div>'
+            + '<div class="search-result-info">'
+            + '<div class="search-result-name">' + esc(name) + '</div>'
+            + '<div class="search-result-addr">' + esc(addr) + '</div>'
+            + '</div>'
+            + '<div class="search-result-dist">' + formatDist(dist) + '</div>'
+            + '</div>';
+        }).join('');
+        // Stash results for selection
+        res._results = results;
+        res.classList.add('open');
+      }
+
+      function selectSearchResult(idx) {
+        const res = document.getElementById('search-results');
+        const r = res._results && res._results[idx];
+        if (!r) return;
+        const pos = r.position;
+        closeSearchResults();
+
+        // Remove previous search marker
+        if (searchMarker) { searchMarker.remove(); searchMarker = null; }
+
+        // Create a distinct red marker for the search location
+        const el = document.createElement('div');
+        el.style.cssText = 'width:30px;height:40px;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.4));';
+        el.innerHTML = '<svg width="30" height="40" viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg">'
+          + '<path d="M15 40 C15 40 3 24 3 15 A12 12 0 1 1 27 15 C27 24 15 40 15 40Z" fill="#e74c3c" stroke="white" stroke-width="2"/>'
+          + '<circle cx="15" cy="15" r="5" fill="white"/></svg>';
+        searchMarker = new ParkingMapSDK.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat([pos.lon, pos.lat]).addTo(map);
+
+        // Add popup with name
+        const name = r.poi ? r.poi.name : (r.address ? r.address.freeformAddress : '');
+        if (name) {
+          const popup = new ParkingMapSDK.Popup({ offset: [0, -40] }).setText(name);
+          searchMarker.setPopup(popup).togglePopup();
+        }
+
+        map.flyTo({ center: [pos.lon, pos.lat], zoom: 16 });
+      }
+
+      function clearSearch() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('search-clear').classList.remove('visible');
+        closeSearchResults();
+        if (searchMarker) { searchMarker.remove(); searchMarker = null; }
+      }
+
+      function closeSearchResults() {
+        document.getElementById('search-results').classList.remove('open');
+      }
+
+      // --- Nearby panel ---
+      let nearbyOpen = false;
+
+      function haversine(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const toRad = x => x * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+
+      function formatDist(m) {
+        return m < 1000 ? Math.round(m) + 'm' : (m / 1000).toFixed(1) + 'km';
+      }
+
+      function toggleNearbyPanel() {
+        nearbyOpen = !nearbyOpen;
+        const panel = document.getElementById('nearby-panel');
+        document.getElementById('btn-nearby').classList.toggle('active', nearbyOpen);
+        panel.classList.toggle('open', nearbyOpen);
+        panel.classList.toggle('dark', darkMode);
+        if (nearbyOpen) buildNearbyList();
+      }
+
+      function buildNearbyList() {
+        const center = map.getCenter();
+        const refLat = center.lat, refLng = center.lng;
+
+        // Filter to parks with availability in current mode
+        const available = filteredCarParks.filter(cp => {
+          const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+          return avail > 0;
+        });
+
+        // Compute distance & sort
+        const withDist = available.map(cp => ({
+          cp, dist: haversine(refLat, refLng, cp.lat, cp.lon)
+        })).sort((a, b) => a.dist - b.dist).slice(0, 15);
+
+        const listEl = document.getElementById('nearby-list');
+        if (withDist.length === 0) {
+          listEl.innerHTML = '<div class="nearby-empty">No available parks found with current filters.</div>';
+          return;
+        }
+
+        const esc = s => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        listEl.innerHTML = withDist.map(({ cp, dist }) => {
+          const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+          const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
+          const color = getColor(avail, total);
+          const icon = showMotorcycle ? '\uD83C\uDFCD\uFE0F' : '\uD83D\uDE97';
+          const chg = cp.chargeStation && cp.chargeStation.available > 0
+            ? ' \u00b7 \u26a1' + cp.chargeStation.available : '';
+          return '<div class="nearby-item" onclick="flyToPark(\'' + cp.car_park_id + '\')">'
+            + '<span class="nearby-dot" style="background:' + color + '"></span>'
+            + '<div class="nearby-info">'
+            + '<div class="nearby-name">' + esc(cp.name) + '</div>'
+            + '<div class="nearby-meta">' + formatDist(dist) + ' \u00b7 ' + icon + ' ' + avail + '/' + total + chg + '</div>'
+            + '</div></div>';
+        }).join('');
+      }
+
+      function flyToPark(id) {
+        const cp = carParkLookup[id];
+        if (!cp) return;
+        // Close panel
+        nearbyOpen = false;
+        document.getElementById('nearby-panel').classList.remove('open');
+        document.getElementById('btn-nearby').classList.remove('active');
+        // Fly to park and open popup
+        map.flyTo({ center: [cp.lon, cp.lat], zoom: 17 });
+        map.once('moveend', () => {
+          // Ensure marker exists and open its popup
+          updateVisibleCarParks();
+          const marker = carParkMarkerMap[id];
+          if (marker) marker.togglePopup();
+        });
+      }
+
+      // --- Filtering ---
+      function toggleFilter(type) {
+        switch (type) {
+          case 'available':  filterAvailable = !filterAvailable; break;
+          case 'charging':   filterCharging = !filterCharging; break;
+          case 'motorcycle': showMotorcycle = !showMotorcycle; break;
+          case 'accessible': filterAccessible = !filterAccessible; break;
+          case 'pregnancy':  filterPregnancy = !filterPregnancy; break;
+        }
+        document.getElementById('toggle-' + type).classList.toggle('active');
+        applyFilters();
+      }
+
+      function applyFilters() {
+        filteredCarParks = allCarParks.filter(cp => {
+          const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+          const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
+
+          // In motorcycle mode, park must have motorcycle capacity
+          if (showMotorcycle && total <= 0) return false;
+
+          // Available + Charging combo: parks with available charging slots
+          if (filterAvailable && filterCharging) {
+            if (!cp.chargeStation || cp.chargeStation.available <= 0) return false;
+          } else {
+            if (filterAvailable && avail <= 0) return false;
+            if (filterCharging && !(cp.chargeStation && cp.chargeStation.total > 0)) return false;
+          }
+          if (filterAccessible && cp.handicapFirst <= 0) return false;
+          if (filterPregnancy && cp.pregnancyFirst <= 0) return false;
+          return true;
+        });
+
+        // Update cluster source
+        const src = map.getSource('carparks');
+        if (src) src.setData(buildGeoJSON());
+        // Update heatmap source
+        const heatSrc = map.getSource('carparks-heat');
+        if (heatSrc) heatSrc.setData(buildHeatGeoJSON());
+        // Recreate markers
+        Object.values(carParkMarkerMap).forEach(m => m.remove());
+        carParkMarkerMap = {};
+        updateVisibleCarParks();
+        updateStatus();
+      }
+
+      // --- GeoJSON builders ---
+      function buildGeoJSON() {
+        return {
+          type: 'FeatureCollection',
+          features: filteredCarParks.map(cp => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [cp.lon, cp.lat] },
+            properties: { car_park_id: cp.car_park_id }
+          }))
+        };
+      }
+
+      function buildHeatGeoJSON() {
+        return {
+          type: 'FeatureCollection',
+          features: filteredCarParks.map(cp => {
+            const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
+            const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
+            let weight = 0.3;
+            if (total > 0 && avail >= 0) {
+              weight = Math.max(0.1, 1 - avail / total);
+            }
+            return {
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [cp.lon, cp.lat] },
+              properties: { weight }
+            };
+          })
+        };
+      }
+
+      // --- Cluster layers ---
+      function setupClusters() {
+        if (!map.getSource('carparks')) {
+          map.addSource('carparks', {
+            type: 'geojson',
+            data: buildGeoJSON(),
+            cluster: true,
+            clusterMaxZoom: CLUSTER_ZOOM - 1,
+            clusterRadius: 60
+          });
+        }
+        if (!map.getLayer('clusters')) {
+          map.addLayer({
+            id: 'clusters',
+            type: 'circle',
+            source: 'carparks',
+            filter: ['has', 'point_count'],
+            paint: {
+              'circle-color': ['step', ['get', 'point_count'], '#27ae60', 20, '#f39c12', 50, '#e74c3c'],
+              'circle-radius': ['step', ['get', 'point_count'], 18, 20, 24, 50, 30],
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#fff'
+            }
+          });
+        }
+        if (!map.getLayer('cluster-count')) {
+          map.addLayer({
+            id: 'cluster-count',
+            type: 'symbol',
+            source: 'carparks',
+            filter: ['has', 'point_count'],
+            layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 13 },
+            paint: { 'text-color': '#ffffff' }
+          });
+        }
+
+        // Cluster click & cursor (safe to re-register — handlers are idempotent by nature)
+        map.on('click', 'clusters', onClusterClick);
+        map.on('mouseenter', 'clusters', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'clusters', () => { map.getCanvas().style.cursor = ''; });
+      }
+
+      function onClusterClick(e) {
+        const features = map.queryRenderedFeatures(e.point, { layers: ['clusters'] });
+        if (!features.length) return;
+        map.getSource('carparks').getClusterExpansionZoom(features[0].properties.cluster_id, (err, zoom) => {
+          if (!err) map.easeTo({ center: features[0].geometry.coordinates, zoom });
+        });
+      }
+
+      // --- Heatmap layer ---
+      function setupHeatmapLayer() {
+        if (!map.getSource('carparks-heat')) {
+          map.addSource('carparks-heat', { type: 'geojson', data: buildHeatGeoJSON() });
+        }
+        if (!map.getLayer('heatmap')) {
+          // Insert heatmap below cluster layers
+          const before = map.getLayer('clusters') ? 'clusters' : undefined;
+          map.addLayer({
+            id: 'heatmap',
+            type: 'heatmap',
+            source: 'carparks-heat',
+            paint: {
+              'heatmap-weight': ['get', 'weight'],
+              'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 10, 1, 16, 3],
+              'heatmap-color': [
+                'interpolate', ['linear'], ['heatmap-density'],
+                0, 'rgba(0,0,0,0)',
+                0.2, 'rgba(39,174,96,0.4)',
+                0.4, 'rgba(241,196,15,0.5)',
+                0.6, 'rgba(243,156,18,0.6)',
+                0.8, 'rgba(231,76,60,0.7)',
+                1.0, 'rgba(192,57,43,0.8)'
+              ],
+              'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 30, 16, 60],
+              'heatmap-opacity': 0.7
+            }
+          }, before);
+        }
+      }
+
+      function toggleHeatmap() {
+        showHeatmap = !showHeatmap;
+        document.getElementById('btn-heatmap').classList.toggle('active', showHeatmap);
+        if (showHeatmap) {
+          setupHeatmapLayer();
+          map.setLayoutProperty('heatmap', 'visibility', 'visible');
+        } else if (map.getLayer('heatmap')) {
+          map.setLayoutProperty('heatmap', 'visibility', 'none');
+        }
+      }
+
+      // --- Dark mode ---
+      function toggleDarkMode() {
+        darkMode = !darkMode;
+        document.getElementById('btn-dark').classList.toggle('active', darkMode);
+        document.getElementById('search-wrap').classList.toggle('dark', darkMode);
+
+        // Remove all DOM markers before style swap
+        Object.values(carParkMarkerMap).forEach(m => m.remove());
+        carParkMarkerMap = {};
+
+        const styleName = darkMode ? 'rasterDark' : 'rasterLight';
+        ParkingMapSDK.setStyle(map, styleName);
+
+        map.once('styledata', () => {
+          if (allCarParks.length === 0) return;
+          setupClusters();
+          if (showHeatmap) setupHeatmapLayer();
+          updateVisibleCarParks();
+        });
+      }
+
+      // --- Viewport marker management ---
+      function updateVisibleCarParks() {
+        if (filteredCarParks.length === 0 || map.getZoom() < CLUSTER_ZOOM) {
+          Object.values(carParkMarkerMap).forEach(m => m.remove());
+          carParkMarkerMap = {};
+          return;
+        }
+        const bounds = map.getBounds();
+        const s = bounds.getSouth(), n = bounds.getNorth();
+        const w = bounds.getWest(), e = bounds.getEast();
+        const latPad = (n - s) * 0.1, lonPad = (e - w) * 0.1;
+        const minLat = s - latPad, maxLat = n + latPad;
+        const minLon = w - lonPad, maxLon = e + lonPad;
+
+        const visibleIds = new Set();
+        filteredCarParks.forEach(cp => {
+          if (cp.lat >= minLat && cp.lat <= maxLat && cp.lon >= minLon && cp.lon <= maxLon) {
+            visibleIds.add(cp.car_park_id);
+            if (!carParkMarkerMap[cp.car_park_id]) {
+              try {
+                const marker = createCarParkMarker(cp);
+                marker.addTo(map);
+                carParkMarkerMap[cp.car_park_id] = marker;
+              } catch(ex) {}
+            }
+          }
+        });
+        Object.keys(carParkMarkerMap).forEach(id => {
+          if (!visibleIds.has(id)) { carParkMarkerMap[id].remove(); delete carParkMarkerMap[id]; }
+        });
+      }
+
+      // --- Refresh ---
+      async function refreshAvailability() {
+        try {
+          availCache.expires = 0;
+          const availMap = await fetchAvailability();
+          for (const cp of allCarParks) {
+            const av = availMap[cp.car_park_id] || {};
+            cp.availableSpaces = av.availablecar != null ? av.availablecar : -1;
+            cp.availableMotor = av.availablemotor != null ? av.availablemotor : -1;
+            cp.availableHandicap = av.availablehandicap != null ? av.availablehandicap : -1;
+            cp.availablePregnancy = av.availablepregnancy != null ? av.availablepregnancy : -1;
+            if (cp.availableSpaces === -9) cp.availableSpaces = -1;
+            if (cp.availableMotor === -9) cp.availableMotor = -1;
+            cp.chargeStation = av.chargeStation || null;
+          }
+          applyFilters();
+        } catch (err) { console.error('Refresh failed:', err); }
+      }
+
+      function updateStatus() {
+        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const s = filteredCarParks.length, t = allCarParks.length;
+        document.getElementById('status-text').textContent =
+          (s < t ? `${s}/${t}` : `${t}`) + ' \u00b7 ' + time;
+      }
+
+      function showError(msg) {
+        const b = document.getElementById('error-banner');
+        b.textContent = msg; b.style.display = 'block';
+      }
+
+      // --- Init ---
+      async function loadData() {
+        try {
+          const [descParks, availMap] = await Promise.all([fetchDescriptions(), fetchAvailability()]);
+          allCarParks = mergeParks(descParks, availMap);
+          carParkLookup = {};
+          allCarParks.forEach(cp => { carParkLookup[cp.car_park_id] = cp; });
+          filteredCarParks = allCarParks.slice();
+          console.log(`Merged ${allCarParks.length} car parks`);
+          setupClusters();
+          updateVisibleCarParks();
+          updateStatus();
+          document.getElementById('loading').classList.add('hidden');
+        } catch (err) {
+          console.error('Failed to load data:', err);
+          document.getElementById('loading').classList.add('hidden');
+          if (err instanceof TypeError && err.message.includes('fetch')) {
+            showError('CORS blocked: serve this file via a local server (python3 -m http.server) or use a CORS proxy.');
+          } else {
+            showError('Failed to load parking data: ' + err.message);
+          }
+        }
+      }
+
+      function initMap(lat, lng) {
+        map = ParkingMapSDK.createMap({
+          key: API_KEY, container: 'map',
+          center: [lng, lat], zoom: 13, language: 'zh-TW'
+        });
+        map.addControl(new ParkingMapSDK.NavigationControl());
+        map.addControl(new ParkingMapSDK.GeolocateControl({
+          positionOptions: { enableHighAccuracy: true },
+          trackUserLocation: true, showUserLocation: true
+        }));
+
+        map.on('load', () => {
+          setTimeout(() => { const b = document.querySelector('.maplibregl-ctrl-geolocate'); if (b) b.click(); }, 500);
+          loadData();
+        });
+        map.on('click', () => { closeSearchResults(); });
+        map.on('moveend', () => { updateVisibleCarParks(); if (nearbyOpen) buildNearbyList(); });
+        map.on('zoomend', updateVisibleCarParks);
+        setInterval(refreshAvailability, AVAIL_TTL);
+      }
+
+      window.onload = function() {
+        const dLat = 25.033, dLng = 121.565;
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            pos => initMap(pos.coords.latitude, pos.coords.longitude),
+            () => initMap(dLat, dLng),
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+          );
+        } else { initMap(dLat, dLng); }
+      };
+    </script>
+  </body>
+</html>
