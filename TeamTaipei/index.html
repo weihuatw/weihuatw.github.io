@@ -72,6 +72,21 @@
         background: #2980b9; color: #fff;
       }
 
+      .traffic-legend {
+        position: absolute; right: 10px; bottom: 58px; z-index: 100;
+        display: none; align-items: center; gap: 6px; flex-wrap: wrap;
+        max-width: 250px; padding: 7px 9px; border-radius: 10px;
+        background: rgba(255,255,255,0.94); color: #4b5563;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        font: 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      }
+      .traffic-legend.open { display: flex; }
+      .traffic-legend.dark { background: rgba(40,40,50,0.94); color: #e5e7eb; }
+      .traffic-legend-title { font-weight: 700; margin-right: 2px; }
+      .traffic-legend-item { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+      .traffic-legend-swatch { width: 16px; height: 5px; border-radius: 999px; display: inline-block; }
+
       .error-banner {
         position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
         background: #e74c3c; color: white; padding: 10px 20px; border-radius: 8px;
@@ -308,6 +323,7 @@
     <div class="map-controls">
       <button id="btn-nearby" class="map-ctrl-btn" onclick="toggleNearbyPanel()" title="Nearest Available Parks">&#x1f4cd;</button>
       <button id="btn-favorites" class="map-ctrl-btn" onclick="toggleFavoritesPanel()" title="Favorite Parks">&#x2665;</button>
+      <button id="btn-traffic" class="map-ctrl-btn" onclick="toggleTrafficFlow()" title="Traffic Flow" aria-label="Traffic Flow">&#x1f6a6;</button>
       <button id="btn-heatmap" class="map-ctrl-btn" onclick="toggleHeatmap()" title="Occupancy Heatmap">&#x1f525;</button>
       <button id="btn-dark" class="map-ctrl-btn" onclick="toggleDarkMode()" title="Dark Mode">&#x1f319;</button>
     </div>
@@ -326,6 +342,13 @@
         <button class="nearby-close" onclick="toggleFavoritesPanel()">&times;</button>
       </div>
       <div id="favorites-list" class="nearby-list"></div>
+    </div>
+
+    <div id="traffic-legend" class="traffic-legend" aria-label="Traffic flow legend">
+      <span class="traffic-legend-title">Traffic</span>
+      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#25a244"></i>Free</span>
+      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#f2c94c"></i>Slow</span>
+      <span class="traffic-legend-item"><i class="traffic-legend-swatch" style="background:#eb5757"></i>Heavy</span>
     </div>
 
     <div class="bottom-bar">
@@ -350,6 +373,8 @@
       const CLUSTER_ZOOM = 15;
       const DETAIL_PIN_ZOOM = 15;
       const FAVORITES_KEY = 'team-taipei:favorites:v1';
+      const TRAFFIC_SOURCE_ID = 'traffic-flow';
+      const TRAFFIC_LAYER_ID = 'traffic-flow-layer';
 
       let map;
       let allCarParks = [];
@@ -367,6 +392,7 @@
       let filterAccessible = false;
       let filterPregnancy = false;
       let showHeatmap = false;
+      let trafficEnabled = false;
       let darkMode = false;
 
       // --- Favorite parks ---
@@ -1034,6 +1060,63 @@
         });
       }
 
+      // --- Traffic flow layer ---
+      function setupTrafficFlowLayer() {
+        if (!map.getSource(TRAFFIC_SOURCE_ID)) {
+          map.addSource(TRAFFIC_SOURCE_ID, {
+            type: 'raster',
+            tiles: [
+              'https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?tileSize=256&key='
+                + encodeURIComponent(API_KEY)
+            ],
+            tileSize: 256,
+            attribution: '© TomTom'
+          });
+        }
+        if (!map.getLayer(TRAFFIC_LAYER_ID)) {
+          const before = map.getLayer('heatmap') ? 'heatmap'
+            : (map.getLayer('clusters') ? 'clusters' : undefined);
+          const layer = {
+            id: TRAFFIC_LAYER_ID,
+            type: 'raster',
+            source: TRAFFIC_SOURCE_ID,
+            minzoom: 0,
+            maxzoom: 22,
+            paint: {
+              'raster-opacity': 0.72,
+              'raster-fade-duration': 0
+            }
+          };
+          if (before) map.addLayer(layer, before);
+          else map.addLayer(layer);
+        }
+      }
+
+      function updateTrafficFlowUi() {
+        document.getElementById('btn-traffic').classList.toggle('active', trafficEnabled);
+        document.getElementById('traffic-legend').classList.toggle('open', trafficEnabled);
+        document.getElementById('traffic-legend').classList.toggle('dark', darkMode);
+      }
+
+      function toggleTrafficFlow() {
+        trafficEnabled = !trafficEnabled;
+        updateTrafficFlowUi();
+        if (!map) return;
+        try {
+          if (trafficEnabled) {
+            setupTrafficFlowLayer();
+            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'visible');
+          } else if (map.getLayer(TRAFFIC_LAYER_ID)) {
+            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'none');
+          }
+        } catch (err) {
+          console.error('Traffic flow setup failed:', err);
+          trafficEnabled = false;
+          updateTrafficFlowUi();
+          showError('Traffic flow is unavailable right now.');
+        }
+      }
+
       // --- Heatmap layer ---
       function setupHeatmapLayer() {
         if (!map.getSource('carparks-heat')) {
@@ -1083,6 +1166,7 @@
         document.getElementById('search-wrap').classList.toggle('dark', darkMode);
         document.getElementById('nearby-panel').classList.toggle('dark', darkMode);
         document.getElementById('favorites-panel').classList.toggle('dark', darkMode);
+        updateTrafficFlowUi();
 
         // Remove all DOM markers before style swap
         Object.values(carParkMarkerMap).forEach(m => m.remove());
@@ -1094,7 +1178,11 @@
         map.once('styledata', () => {
           if (allCarParks.length === 0) return;
           setupClusters();
+          if (trafficEnabled) setupTrafficFlowLayer();
           if (showHeatmap) setupHeatmapLayer();
+          if (trafficEnabled && map.getLayer(TRAFFIC_LAYER_ID)) {
+            map.setLayoutProperty(TRAFFIC_LAYER_ID, 'visibility', 'visible');
+          }
           updateVisibleCarParks();
         });
       }
