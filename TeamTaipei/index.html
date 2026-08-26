@@ -354,7 +354,7 @@
       </div>
     </div>
 
-    <script type="module" src="assets/tomtom-map-sdk.js?v=0.51.3-raster2"></script>
+    <script type="module" src="assets/tomtom-map-sdk.js?v=0.51.3-vector1"></script>
     <script>
       const API_KEY = 'mxLTSlo2po4kpp4JfGNGr8a1OQoj6fUz';
       const DESC_URL = 'https://tcgbusfs.blob.core.windows.net/blobtcmsv/TCMSV_alldesc.json';
@@ -365,6 +365,8 @@
       const DETAIL_PIN_ZOOM = 15;
       const FAVORITES_KEY = 'team-taipei:favorites:v1';
       const ROUTING_URL = 'https://api.tomtom.com/routing/1/calculateRoute/';
+      const MAP_STYLE_LIGHT = 'standardLight';
+      const MAP_STYLE_DARK = 'standardDark';
 
       let map;
       let allCarParks = [];
@@ -1227,7 +1229,7 @@
         Object.values(carParkMarkerMap).forEach(m => m.remove());
         carParkMarkerMap = {};
 
-        const styleName = darkMode ? 'rasterDark' : 'rasterLight';
+        const styleName = darkMode ? MAP_STYLE_DARK : MAP_STYLE_LIGHT;
         ParkingMapSDK.setStyle(map, styleName);
 
         map.once('styledata', () => {
@@ -1351,7 +1353,8 @@
         etaCache.clear();
         map = ParkingMapSDK.createMap({
           key: API_KEY, container: 'map',
-          center: [lng, lat], zoom: 13, language: 'zh-TW'
+          center: [lng, lat], zoom: 13, language: 'zh-TW',
+          style: MAP_STYLE_LIGHT
         });
         map.addControl(new ParkingMapSDK.NavigationControl());
         const geolocateControl = new ParkingMapSDK.GeolocateControl({
