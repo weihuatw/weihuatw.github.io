@@ -163,6 +163,10 @@
       }
       .eta-result.error { background: #fff4f2; color: #b33a32; }
       .eta-result.loading { color: #667085; }
+      .eta-clear-route {
+        float: right; border: 0; background: transparent; color: inherit;
+        cursor: pointer; font-size: 11px; padding: 0 0 0 8px; text-decoration: underline;
+      }
 
       .search-wrap {
         position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
@@ -358,6 +362,9 @@
       const DETAIL_PIN_ZOOM = 15;
       const FAVORITES_KEY = 'team-taipei:favorites:v1';
       const ROUTING_URL = 'https://api.tomtom.com/routing/1/calculateRoute/';
+      const ROUTE_SOURCE_ID = 'planned-route';
+      const ROUTE_CASING_LAYER_ID = 'planned-route-casing';
+      const ROUTE_LAYER_ID = 'planned-route-line';
       const MAP_STYLE_LIGHT = 'standardLight';
       const MAP_STYLE_DARK = 'standardDark';
 
@@ -373,6 +380,7 @@
       let favoriteIds = new Set();
       let userLocation = null;
       const etaCache = new Map();
+      let activeRouteGeoJSON = null;
 
       // Filter / display state
       let filterAvailable = false;
@@ -672,7 +680,7 @@
 
         const etaId = favoriteJsArg(cp.car_park_id);
         h += '<button type="button" class="eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id) + '"'
-           + ' onclick="calculateEta(\'' + etaId + '\')">估算行車時間</button>';
+           + ' onclick="calculateEta(\'' + etaId + '\')">規劃路線與估算時間</button>';
         h += '<div class="eta-result" data-eta-result-id="' + favoriteAttr(cp.car_park_id) + '"'
            + ' aria-live="polite" style="display:none"></div>';
 
@@ -745,7 +753,86 @@
         const arrivalText = arrival ? ' · 抵達 ' + arrival : '';
         renderEtaMessage(id,
           '開車約 <b>' + formatDuration(eta.travelTimeInSeconds) + '</b> · '
-          + formatDist(eta.lengthInMeters) + arrivalText, '');
+          + formatDist(eta.lengthInMeters) + arrivalText
+          + '<button type="button" class="eta-clear-route" onclick="clearActiveRoute()">清除路線</button>', '');
+      }
+
+      function routeToGeoJSON(route) {
+        const coordinates = [];
+        for (const leg of route.legs || []) {
+          for (const point of leg.points || []) {
+            const longitude = Number(point.longitude);
+            const latitude = Number(point.latitude);
+            if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
+            const previous = coordinates[coordinates.length - 1];
+            if (!previous || previous[0] !== longitude || previous[1] !== latitude) {
+              coordinates.push([longitude, latitude]);
+            }
+          }
+        }
+        if (coordinates.length < 2) throw new Error('No route geometry returned');
+        return {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates }
+        };
+      }
+
+      function removeRouteLayers() {
+        if (!map) return;
+        if (map.getLayer(ROUTE_LAYER_ID)) map.removeLayer(ROUTE_LAYER_ID);
+        if (map.getLayer(ROUTE_CASING_LAYER_ID)) map.removeLayer(ROUTE_CASING_LAYER_ID);
+        if (map.getSource(ROUTE_SOURCE_ID)) map.removeSource(ROUTE_SOURCE_ID);
+      }
+
+      function renderRoute() {
+        if (!map || !activeRouteGeoJSON || !map.isStyleLoaded()) return;
+        const source = map.getSource(ROUTE_SOURCE_ID);
+        if (source) {
+          source.setData(activeRouteGeoJSON);
+        } else {
+          map.addSource(ROUTE_SOURCE_ID, { type: 'geojson', data: activeRouteGeoJSON });
+        }
+        if (!map.getLayer(ROUTE_CASING_LAYER_ID)) {
+          map.addLayer({
+            id: ROUTE_CASING_LAYER_ID,
+            type: 'line',
+            source: ROUTE_SOURCE_ID,
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#ffffff', 'line-width': 9, 'line-opacity': 0.9 }
+          });
+        }
+        if (!map.getLayer(ROUTE_LAYER_ID)) {
+          map.addLayer({
+            id: ROUTE_LAYER_ID,
+            type: 'line',
+            source: ROUTE_SOURCE_ID,
+            layout: { 'line-cap': 'round', 'line-join': 'round' },
+            paint: { 'line-color': '#1976d2', 'line-width': 5, 'line-opacity': 0.95 }
+          });
+        }
+      }
+
+      function showRoute(routeGeoJSON) {
+        activeRouteGeoJSON = routeGeoJSON;
+        renderRoute();
+        const coordinates = routeGeoJSON.geometry.coordinates;
+        let minLng = coordinates[0][0], maxLng = coordinates[0][0];
+        let minLat = coordinates[0][1], maxLat = coordinates[0][1];
+        coordinates.slice(1).forEach(([lng, lat]) => {
+          minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng);
+          minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+        });
+        map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+          padding: { top: 90, right: 45, bottom: 120, left: 45 },
+          maxZoom: 16.5,
+          duration: 600
+        });
+      }
+
+      function clearActiveRoute() {
+        activeRouteGeoJSON = null;
+        removeRouteLayers();
       }
 
       async function calculateEta(id) {
@@ -762,40 +849,46 @@
         const cached = etaCache.get(cacheKey);
         if (cached && cached.expires > Date.now()) {
           renderEtaResult(key, cached.data);
+          if (cached.data.routeGeoJSON) showRoute(cached.data.routeGeoJSON);
           return;
         }
 
         elements.buttons.forEach(button => {
           button.disabled = true;
-          button.textContent = '計算中…';
+          button.textContent = '規劃中…';
         });
         renderEtaMessage(key, '正在計算行車時間…', 'loading');
+        clearActiveRoute();
 
         try {
           const locations = userLocation.lat + ',' + userLocation.lon + ':' + cp.lat + ',' + cp.lon;
           const url = ROUTING_URL + locations + '/json?travelMode=car&departAt=now&key='
-            + encodeURIComponent(API_KEY);
+            + encodeURIComponent(API_KEY) + '&routeRepresentation=polyline';
           const response = await fetch(url);
           if (!response.ok) throw new Error('Routing request failed: ' + response.status);
           const payload = await response.json();
-          const summary = payload.routes && payload.routes[0] && payload.routes[0].summary;
+          const route = payload.routes && payload.routes[0];
+          const summary = route && route.summary;
           if (!summary || !Number.isFinite(summary.travelTimeInSeconds)) {
             throw new Error('No route summary returned');
           }
+          const routeGeoJSON = routeToGeoJSON(route);
           const data = {
             travelTimeInSeconds: summary.travelTimeInSeconds,
             lengthInMeters: summary.lengthInMeters,
-            arrivalTime: summary.arrivalTime
+            arrivalTime: summary.arrivalTime,
+            routeGeoJSON
           };
           etaCache.set(cacheKey, { data, expires: Date.now() + 120000 });
           renderEtaResult(key, data);
+          showRoute(routeGeoJSON);
         } catch (err) {
           console.error('ETA calculation failed:', err);
           renderEtaMessage(key, '目前無法取得路線，請稍後再試。', 'error');
         } finally {
           elements.buttons.forEach(button => {
             button.disabled = false;
-            button.textContent = '估算行車時間';
+            button.textContent = '規劃路線與估算時間';
           });
         }
       }
@@ -1225,11 +1318,13 @@
         const styleName = darkMode ? MAP_STYLE_DARK : MAP_STYLE_LIGHT;
         ParkingMapSDK.setStyle(map, styleName);
 
-        map.once('styledata', () => {
-          if (allCarParks.length === 0) return;
-          setupClusters();
-          if (showHeatmap) setupHeatmapLayer();
-          updateVisibleCarParks();
+        map.once('idle', () => {
+          if (allCarParks.length > 0) {
+            setupClusters();
+            if (showHeatmap) setupHeatmapLayer();
+            updateVisibleCarParks();
+          }
+          renderRoute();
         });
       }
 
