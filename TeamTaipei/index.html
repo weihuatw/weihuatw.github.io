@@ -240,8 +240,8 @@
         width: 40px; height: 28px; box-sizing: border-box;
         display: flex; align-items: center; justify-content: center;
         border: 2px solid var(--pin-color); border-radius: 10px;
-        background: rgba(255,255,255,0.97); color: #172033;
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+        background: var(--pin-color); color: #fff;
+        box-shadow: none;
         transition: transform 0.18s ease, background 0.18s ease;
       }
       .carpark-pin-value {
@@ -252,7 +252,7 @@
       .carpark-pin-tip {
         position: absolute; left: 17px; top: 23px; z-index: 1;
         width: 10px; height: 10px; box-sizing: border-box;
-        background: #fff; border-right: 2px solid var(--pin-color);
+        background: var(--pin-color); border-right: 2px solid var(--pin-color);
         border-bottom: 2px solid var(--pin-color); transform: rotate(45deg);
       }
       .carpark-pin-feature {
@@ -267,14 +267,7 @@
       .carpark-pin-feature.motorcycle {
         background: #7454b3; color: #fff; font-size: 8px; font-weight: 800;
       }
-      .carpark-pin.status-full .carpark-pin-card {
-        background: var(--pin-color); color: #fff; box-shadow: none;
-      }
-      .carpark-pin.status-full .carpark-pin-tip { background: var(--pin-color); }
-      .carpark-pin.status-unknown { opacity: 0.68; filter: none; }
-      .carpark-pin.status-unknown .carpark-pin-card {
-        background: rgba(248,250,252,0.92); color: #64748b;
-      }
+      .carpark-pin.status-unknown { opacity: 1; }
       .carpark-pin:hover, .carpark-pin.is-selected {
         z-index: 10; filter: drop-shadow(0 6px 9px rgba(15,23,42,0.34));
       }
@@ -293,10 +286,10 @@
       .carpark-pin.is-compact .carpark-pin-tip,
       .carpark-pin.is-compact .carpark-pin-feature { display: none; }
       .carpark-pin.is-compact.status-unknown .carpark-pin-card {
-        background: #fff; border-color: #fff; box-shadow: 0 0 0 1.5px var(--pin-color);
+        background: var(--pin-color); border-color: var(--pin-color); box-shadow: 0 0 0 1px var(--pin-color);
       }
       .carpark-pin.is-compact.status-unknown .carpark-pin-card::after {
-        content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--pin-color);
+        content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff;
       }
       .carpark-pin.is-compact:hover .carpark-pin-card,
       .carpark-pin.is-compact.is-selected .carpark-pin-card { transform: scale(1.25); }
