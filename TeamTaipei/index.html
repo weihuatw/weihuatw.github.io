@@ -326,7 +326,6 @@
       .menu-button, .locate-button { position: absolute; z-index: 151; width: 50px; height: 50px; border: 0; border-radius: 16px; background: #fff; box-shadow: 0 6px 22px rgba(0,0,0,.12); font-size: 22px; cursor: pointer; }
       .menu-button { top: 14px; right: 14px; }
       .locate-button { right: 14px; bottom: 310px; }
-      .map-hint { position: absolute; top: 76px; left: 14px; z-index: 120; max-width: calc(100% - 28px); padding: 8px 10px; border-radius: 11px; background: rgba(255,255,255,.94); box-shadow: 0 4px 14px rgba(0,0,0,.08); color: #47515c; font-size: 12px; }
       .nearby-panel { bottom: 0; left: 0; transform: translateY(0); width: 100%; max-width: none; max-height: 56vh; border-radius: 28px 28px 0 0; box-shadow: 0 -5px 28px rgba(15,23,42,.16); background: var(--panel); transition: transform .24s ease; }
       .nearby-panel.collapsed { transform: translateY(calc(100% - 54px)); }
       .nearby-panel.open { display: block; }
@@ -353,6 +352,8 @@
       .nearby-route-status { margin: 0 18px 8px; }
       .nearby-route-status.route-preview { margin-top: 0; padding: 9px 10px; font-size: 13px; }
       .nearby-route-status .route-action { float: right; border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0 0 0 8px; }
+      .clear-route-preview { width: 100%; min-height: 44px; margin: 0 18px 12px; width: calc(100% - 36px); border: 1px solid #e2b7b1; border-radius: 12px; background: #fff7f5; color: #a64b35; font-weight: 750; cursor: pointer; }
+      .clear-route-preview:hover { background: #ffede9; }
       .route-preview-button { width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #c9d8f2; border-radius: 12px; background: #f5f8ff; color: #245b93; font-weight: 750; cursor: pointer; }
       .route-preview-button:hover { background: #e9f1ff; }
       .filter-launch { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 9px 12px; color: var(--text); font-weight: 700; cursor: pointer; }
@@ -403,7 +404,6 @@
       .maplibregl-ctrl-group button { width: 44px; height: 44px; }
       .selected-park { z-index: 20; background: var(--accent); color: white; border: 3px solid white; border-radius: 14px; padding: 10px 14px; box-shadow: 0 3px 14px #17212b60; font-weight: 800; max-width: 230px; text-align: center; cursor: pointer; }
       .selected-park::after { content: ''; position: absolute; bottom: -8px; left: calc(50% - 7px); border: 7px solid transparent; border-top-color: var(--accent); border-bottom: 0; }
-      .map-hint { max-width: min(360px, calc(100% - 80px)); }
       .sheet-dialog { max-height: 85%; overflow-y: auto; }
       .sheet-close { float: right; min-width: 44px; min-height: 44px; border: 0; border-radius: 10px; cursor: pointer; }
       .app-shell.dark { --panel: #282832; --text: #eee; --muted: #bec5d0; --line: #454550; }
@@ -432,8 +432,6 @@
 
     <button id="btn-menu" class="menu-button" type="button" aria-label="更多設定" aria-expanded="false" onclick="toggleMenu()">&#8942;</button>
     <button class="locate-button" type="button" aria-label="回到目前位置" onclick="locateUser()">&#9678;</button>
-    <div id="map-hint" class="map-hint">正在尋找附近現在能停的地方</div>
-
     <button id="nearby-launch" disabled class="nearby-launch" onclick="openNearby()">查看附近空位</button>
     <button id="area-search" class="area-search" onclick="searchThisArea()" hidden>搜尋此區域</button>
     <section id="nearby-panel" class="nearby-panel" aria-label="停車場資訊">
@@ -452,6 +450,7 @@
       </div>
       <div id="result-extra" style="padding:0 18px 14px"></div>
       <div id="nearby-route-status" class="nearby-route-status" aria-live="polite"></div>
+      <button id="clear-route-preview" class="clear-route-preview" type="button" onclick="cancelRoutePreview()" hidden>清除路線預覽</button>
     </section>
 
     <div id="filter-sheet" class="filter-sheet" role="dialog" aria-modal="true" aria-labelledby="filter-title">
@@ -874,6 +873,8 @@
         status.className = 'nearby-route-status route-preview' + (type ? ' ' + type : '');
         status.innerHTML = message;
         status.style.display = message ? 'block' : 'none';
+        const clearButton = document.getElementById('clear-route-preview');
+        if (clearButton) clearButton.hidden = !message || type === 'error';
       }
 
       function routeToGeoJSON(route) {
@@ -958,6 +959,8 @@
         if (nearbyStatus && !nearbyStatus.classList.contains('loading')) {
           renderNearbyRouteStatus('');
         }
+        const clearButton = document.getElementById('clear-route-preview');
+        if (clearButton) clearButton.hidden = true;
       }
 
       function cancelRoutePreview() {
@@ -1202,6 +1205,7 @@
         if (!searchAnchor) { const c = map.getCenter(); searchAnchor = {lat:c.lat, lon:c.lng, label:'地圖中心'}; }
         if (!selectedParkId) buildNearbyList();
         updatePanelLayout();
+        openResultDetails();
         if (selectedParkId) { const cp = carParkLookup[selectedParkId]; map.easeTo({center:[cp.lon,cp.lat],offset:window.innerWidth < 700 ? [0,-document.getElementById('nearby-panel').offsetHeight/2] : [180,0]}); }
       }
 
@@ -1368,6 +1372,15 @@
         button.setAttribute('aria-expanded', String(open));
       }
 
+      function openResultDetails() {
+        const details = document.getElementById('result-details');
+        const button = document.getElementById('result-details-button');
+        if (!details || !button) return;
+        details.classList.add('open');
+        button.textContent = '收起詳情';
+        button.setAttribute('aria-expanded', 'true');
+      }
+
       async function routeToFirstAvailable() {
         navigateNearbySelection();
       }
@@ -1462,16 +1475,15 @@
       }
 
       function locateUser() {
-        if (!navigator.geolocation) { document.getElementById('map-hint').textContent = '此瀏覽器不支援定位，請搜尋目的地。'; return; }
+        if (!navigator.geolocation) { showError('此瀏覽器不支援定位，請搜尋目的地。'); return; }
         navigator.geolocation.getCurrentPosition(pos => {
           setUserLocation(pos.coords);
           searchAnchor = {...userLocation, label:'目前位置'}; candidateMode = 'nearby'; selectedParkId = null;
           nearbyOpen = true; panelCollapsed = false;
           buildNearbyList(); updatePanelLayout(); frameSearchResults();
           document.getElementById('area-search').hidden = true;
-          document.getElementById('map-hint').textContent = '已依目前位置搜尋附近空位';
         }, () => {
-          document.getElementById('map-hint').textContent = '請允許定位，或搜尋目的地以取得附近可用車位。';
+          showError('請允許定位，或搜尋目的地以取得附近可用車位。');
         }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
       }
 
@@ -1759,8 +1771,6 @@
           document.getElementById('nearby-launch').disabled = false;
           searchAnchor = userLocation ? {...userLocation,label:'目前位置'} : {lat:map.getCenter().lat,lon:map.getCenter().lng,label:'地圖中心'};
           updatePanelLayout();
-          document.getElementById('map-hint').textContent = userLocation
-            ? '已依目前位置排序附近可用停車場' : '啟用定位後，可依你的距離排序附近空位';
           document.getElementById('loading').classList.add('hidden');
         } catch (err) {
           console.error('Failed to load data:', err);
