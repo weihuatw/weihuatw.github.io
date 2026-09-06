@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
     <title>Taipei Car Parks - Live Availability</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <link rel="stylesheet" type="text/css" href="assets/tomtom-map-sdk.css" />
     <style>
       :root { --accent: #1463ff; --text: #17212b; --muted: #6b7785; --line: #e5e9ee; --panel: #fff; }
@@ -369,6 +369,43 @@
       .menu-dialog button:hover { background: #f3f5f7; }
       .bottom-bar, .map-controls { display: none; }
       @media (min-width: 700px) { body { padding: 0; } .app-shell { width: 100vw; height: 100vh; margin: 0; border-radius: 0; box-shadow: none; } .nearby-panel { left: 24px; width: min(440px, calc(100% - 48px)); bottom: 24px; border-radius: 24px; } .locate-button { bottom: 120px; } }
+
+      /* Task-first layout: a compact entry, one selection, unobstructed controls. */
+      * { box-sizing: border-box; }
+      button:focus-visible, input:focus-visible { outline: 3px solid #1463ff; outline-offset: 3px; }
+      .search-wrap { width: min(360px, calc(100% - 88px)); right: auto; }
+      .search-results { max-height: min(55vh, 400px); overflow-y: auto; }
+      .nearby-panel { max-height: 58%; overflow-y: auto; padding-bottom: env(safe-area-inset-bottom); }
+      .nearby-panel.open { display: flex; }
+      .nearby-panel.collapsed { display: none; }
+      .nearby-panel .nearby-header { padding-top: 8px; min-height: 56px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+      .nearby-panel .nearby-header::before { display: none; }
+      .nearby-title { margin: 0; }
+      .panel-handle { position: static; transform: none; width: 44px; height: 44px; font-size: 22px; color: var(--muted); flex-shrink: 0; }
+      .panel-handle::before { display: none; }
+      .nearby-list { overflow: visible; padding-bottom: 12px; }
+      .nearby-route-actions { flex-direction: column; }
+      .nearby-next-button { min-height: 44px; }
+      .result-secondary button, .filter-launch, .search-result-item { min-height: 44px; }
+      .result-meta { display: block; line-height: 1.6; }
+      .result-meta span { display: block; }
+      .result-secondary { margin-bottom: 4px; }
+      .nearby-launch, .area-search { position: absolute; z-index: 201; border: 0; border-radius: 16px; background: var(--panel); color: var(--text); box-shadow: 0 4px 18px #17212b26; padding: 14px 18px; min-height: 48px; font-size: 14px; font-weight: 700; cursor: pointer; }
+      .nearby-launch { left: 14px; bottom: calc(24px + env(safe-area-inset-bottom)); }
+      .area-search { top: 116px; left: 50%; transform: translateX(-50%); color: var(--accent); }
+      [hidden] { display: none !important; }
+      .locate-button { bottom: var(--controls-bottom, 94px); width: 44px; height: 44px; right: 14px; }
+      .app-shell .maplibregl-ctrl-top-right { top: auto; bottom: calc(var(--controls-bottom, 94px) + 52px); right: 4px; }
+      .maplibregl-ctrl-group button { width: 44px; height: 44px; }
+      .selected-park { z-index: 20; background: var(--accent); color: white; border: 3px solid white; border-radius: 14px; padding: 10px 14px; box-shadow: 0 3px 14px #17212b60; font-weight: 800; max-width: 230px; text-align: center; cursor: pointer; }
+      .selected-park::after { content: ''; position: absolute; bottom: -8px; left: calc(50% - 7px); border: 7px solid transparent; border-top-color: var(--accent); border-bottom: 0; }
+      .map-hint { max-width: min(360px, calc(100% - 80px)); }
+      .sheet-dialog { max-height: 85%; overflow-y: auto; }
+      .sheet-close { float: right; min-width: 44px; min-height: 44px; border: 0; border-radius: 10px; cursor: pointer; }
+      .app-shell.dark { --panel: #282832; --text: #eee; --muted: #bec5d0; --line: #454550; }
+      .app-shell.dark .search-bar, .app-shell.dark .menu-dialog, .app-shell.dark .sheet-dialog,
+      .app-shell.dark .menu-button, .app-shell.dark .locate-button, .app-shell.dark .filter-launch { background: var(--panel); color: var(--text); }
+      @media (min-width: 700px) { .nearby-panel { width: 360px; max-height: calc(100% - 150px); } .nearby-launch { left: 24px; } }
     </style>
   </head>
   <body>
@@ -376,15 +413,15 @@
     <div id="map"></div>
     <div id="loading" class="loading-overlay">
       <div class="spinner"></div>
-      <div>Loading Taipei car parks...</div>
+      <div>正在載入台北停車場…</div>
     </div>
     <div id="error-banner" class="error-banner"></div>
 
     <div id="search-wrap" class="search-wrap">
       <div class="search-bar">
-        <input id="search-input" type="text" placeholder="Search places..." autocomplete="off"
+        <input id="search-input" type="text" placeholder="搜尋目的地或停車場" aria-label="搜尋目的地或停車場" autocomplete="off"
                oninput="onSearchInput()" onkeydown="onSearchKey(event)" />
-        <button id="search-clear" class="search-clear" onclick="clearSearch()">&times;</button>
+        <button aria-label="清除搜尋" id="search-clear" class="search-clear" onclick="clearSearch()">&times;</button>
       </div>
       <div id="search-results" class="search-results"></div>
     </div>
@@ -393,26 +430,29 @@
     <button class="locate-button" type="button" aria-label="回到目前位置" onclick="locateUser()">&#9678;</button>
     <div id="map-hint" class="map-hint">正在尋找附近現在能停的地方</div>
 
-    <div id="nearby-panel" class="nearby-panel">
+    <button id="nearby-launch" disabled class="nearby-launch" onclick="openNearby()">查看附近空位</button>
+    <button id="area-search" class="area-search" onclick="searchThisArea()" hidden>搜尋此區域</button>
+    <section id="nearby-panel" class="nearby-panel" aria-label="停車場資訊">
       <div class="nearby-header">
-        <button id="panel-handle" class="panel-handle" type="button" aria-label="收起導航面板" aria-expanded="true" onclick="togglePanelCollapsed()"></button>
-        <span class="nearby-title">附近有空位</span>
+        <button id="panel-handle" class="panel-handle" type="button" aria-label="收起導航面板" aria-expanded="true" onclick="togglePanelCollapsed()">⌄</button>
+        <span class="nearby-title">附近有空位</span><button class="panel-handle" aria-label="關閉停車場資訊" onclick="closeSelection()">×</button>
         <button class="filter-launch" type="button" onclick="openFilterSheet()" aria-label="開啟篩選">篩選</button>
       </div>
       <div id="active-chips" class="active-chips"></div>
+      <div id="nearby-list" class="nearby-list"></div>
       <div class="nearby-route-actions">
         <button id="nearby-route-button" type="button" class="nearby-route-button"
                 onclick="navigateNearbySelection()" disabled>導航到這個停車場 &#8594;</button>
         <button id="nearby-next-button" type="button" class="nearby-next-button"
                 onclick="routeToNextAvailable()" disabled>換一個</button>
       </div>
+      <div id="result-extra" style="padding:0 18px 14px"></div>
       <div id="nearby-route-status" class="nearby-route-status" aria-live="polite"></div>
-      <div id="nearby-list" class="nearby-list"></div>
-    </div>
+    </section>
 
     <div id="filter-sheet" class="filter-sheet" role="dialog" aria-modal="true" aria-labelledby="filter-title">
       <div class="sheet-dialog">
-        <h2 id="filter-title">篩選停車位</h2>
+        <button class="sheet-close" aria-label="關閉篩選" onclick="closeFilterSheet()">×</button><h2 id="filter-title">篩選停車位</h2>
         <label class="filter-option"><span>尚有空位</span><input id="filter-available" type="checkbox"></label>
         <label class="filter-option"><span>電動車充電</span><input id="filter-charging" type="checkbox"></label>
         <label class="filter-option"><span>機車</span><input id="filter-motorcycle" type="checkbox"></label>
@@ -518,7 +558,8 @@
           }
         });
         document.getElementById('btn-favorites').classList.toggle('active', favoriteIds.size > 0 && favoritesOpen);
-        if (favoritesOpen) buildFavoritesList();
+        if (candidateMode === 'favorites' && nearbyOpen) { selectedParkId = null; buildNearbyList(); }
+        else if (selectedParkId === key) { const cp = carParkLookup[key]; renderResultCard(cp, haversine(searchAnchor.lat, searchAnchor.lon, cp.lat, cp.lon)); }
       }
 
       // --- TWD97 to WGS84 ---
@@ -677,6 +718,7 @@
 
         const el = document.createElement('div');
         el.className = 'carpark-pin status-' + status;
+        el.dataset.parkId = String(cp.car_park_id);
         el.classList.toggle('is-compact', map.getZoom() < DETAIL_PIN_ZOOM);
         el.style.setProperty('--pin-color', color);
         el.setAttribute('role', 'button');
@@ -697,26 +739,9 @@
           + '<span class="carpark-pin-tip"></span>' + featureBadge;
 
         const marker = new ParkingMapSDK.Marker({ element: el, anchor: 'bottom' }).setLngLat([cp.lon, cp.lat]);
-        const popup = new ParkingMapSDK.Popup({ offset: [0, -40], maxWidth: '320px' }).setHTML(buildPopupHtml(cp));
-        popup.on('open', () => {
-          if (activeParkingPopup && activeParkingPopup !== popup) closeActiveParkingPopup();
-          activeParkingPopup = popup;
-          activeParkingMarker = marker;
-          el.classList.add('is-selected');
-        });
-        popup.on('close', () => {
-          el.classList.remove('is-selected');
-          if (activeParkingPopup === popup) {
-            activeParkingPopup = null;
-            activeParkingMarker = null;
-          }
-        });
-        marker.setPopup(popup);
+        el.addEventListener('click', event => { event.stopPropagation(); selectPark(cp.car_park_id, true); });
         el.addEventListener('keydown', event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            marker.togglePopup();
-          }
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectPark(cp.car_park_id, true); }
         });
         return marker;
       }
@@ -989,7 +1014,7 @@
         if (q.length < 2) { closeSearchResults(); return; }
         // Show loading
         const res = document.getElementById('search-results');
-        res.innerHTML = '<div class="search-loading">Searching...</div>';
+        res.innerHTML = '<div class="search-loading">搜尋中…</div>';
         res.classList.add('open');
         searchDebounce = setTimeout(() => doSearch(q), 300);
       }
@@ -1009,18 +1034,19 @@
             + '&countrySet=TW&language=zh-TW&limit=8&typeahead=true';
           const resp = await fetch(url);
           const data = await resp.json();
+          if (document.getElementById('search-input').value.trim() !== query) return;
           renderSearchResults(data.results || [], center);
         } catch (err) {
           console.error('Search failed:', err);
           document.getElementById('search-results').innerHTML =
-            '<div class="search-loading">Search failed.</div>';
+            '<div class="search-loading">搜尋失敗，請再試一次。</div>';
         }
       }
 
       function renderSearchResults(results, center) {
         const res = document.getElementById('search-results');
         if (results.length === 0) {
-          res.innerHTML = '<div class="search-loading">No results found.</div>';
+          res.innerHTML = '<div class="search-loading">找不到結果，請嘗試其他關鍵字。</div>';
           return;
         }
         const esc = s => (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -1030,7 +1056,7 @@
           const pos = r.position;
           const dist = haversine(center.lat, center.lng, pos.lat, pos.lon);
           const icon = r.poi ? '\uD83D\uDCCD' : '\uD83C\uDF10';
-          return '<div class="search-result-item" onclick="selectSearchResult(' + i + ')" data-lat="'
+          return '<div role="button" tabindex="0" onkeydown="if(event.key === &quot;Enter&quot; || event.key === &quot; &quot;){event.preventDefault();selectSearchResult(' + i + ')}" class="search-result-item" onclick="selectSearchResult(' + i + ')" data-lat="'
             + pos.lat + '" data-lon="' + pos.lon + '">'
             + '<div class="search-result-icon">' + icon + '</div>'
             + '<div class="search-result-info">'
@@ -1071,13 +1097,20 @@
           searchMarker.setPopup(popup).togglePopup();
         }
 
-        map.flyTo({ center: [pos.lon, pos.lat], zoom: 16 });
+        searchAnchor = {lat:pos.lat,lon:pos.lon,label:name || '目的地'};
+        document.getElementById('search-input').value = name;
+        candidateMode = 'nearby'; selectedParkId = null; nearbyRouteIndex = -1;
+        nearbyOpen = true; panelCollapsed = false;
+        buildNearbyList(); updatePanelLayout();
+        frameSearchResults();
+        document.getElementById('area-search').hidden = true;
       }
 
       function clearSearch() {
         document.getElementById('search-input').value = '';
         document.getElementById('search-clear').classList.remove('visible');
         closeSearchResults();
+        document.getElementById('area-search').hidden = false;
         if (searchMarker) { searchMarker.remove(); searchMarker = null; }
       }
 
@@ -1092,7 +1125,89 @@
       let nearbyRouteIndex = -1;
       let nearbyRouteMode = false;
       let nearbyRouteBusy = false;
-      let panelCollapsed = false;
+      let panelCollapsed = true;
+      let selectedParkId = null;
+      let selectedMarker = null;
+      let userLocationMarker = null;
+      let searchAnchor = null;
+      let candidateMode = 'nearby';
+
+      function updatePanelLayout() {
+        const panel = document.getElementById('nearby-panel');
+        const open = nearbyOpen && !panelCollapsed;
+        panel.classList.toggle('open', open);
+        panel.classList.toggle('collapsed', !open);
+        document.getElementById('nearby-launch').hidden = open;
+        document.getElementById('nearby-launch').textContent = selectedParkId ? '查看已選停車場' : '查看附近空位';
+        const bottom = open && window.innerWidth < 700 ? panel.getBoundingClientRect().height + 12 : 94;
+        document.querySelector('.app-shell').style.setProperty('--controls-bottom', bottom + 'px');
+      }
+
+      function openNearby() {
+        nearbyOpen = true; panelCollapsed = false;
+        if (!searchAnchor) { const c = map.getCenter(); searchAnchor = {lat:c.lat, lon:c.lng, label:'地圖中心'}; }
+        if (!selectedParkId) buildNearbyList();
+        updatePanelLayout();
+        if (selectedParkId) { const cp = carParkLookup[selectedParkId]; map.easeTo({center:[cp.lon,cp.lat],offset:window.innerWidth < 700 ? [0,-document.getElementById('nearby-panel').offsetHeight/2] : [180,0]}); }
+      }
+
+      function searchThisArea() {
+        const c = map.getCenter();
+        searchAnchor = {lat:c.lat, lon:c.lng, label:'地圖中心'};
+        candidateMode = 'nearby'; selectedParkId = null; nearbyRouteIndex = -1;
+        document.getElementById('area-search').hidden = true;
+        openNearby();
+      }
+
+      function frameSearchResults() {
+        if (!searchAnchor) return;
+        const cp = selectedParkId && carParkLookup[selectedParkId];
+        const origin = [searchAnchor.lon, searchAnchor.lat];
+        const mobile = window.innerWidth < 700;
+        map.fitBounds([origin, cp ? [cp.lon, cp.lat] : origin], {
+          maxZoom:16, padding:{top:120,right:80,bottom:mobile ? document.getElementById('nearby-panel').offsetHeight + 20 : 40,left:mobile ? 30 : 400}
+        });
+      }
+
+      function closeSelection() {
+        selectedParkId = null;
+        if (selectedMarker) selectedMarker.remove();
+        selectedMarker = null;
+        syncMarkerDensity();
+        resetNearbyRouteMode(); clearActiveRoute();
+        nearbyOpen = false; panelCollapsed = true; updatePanelLayout();
+      }
+
+      function selectPark(id, reveal = false) {
+        const cp = carParkLookup[String(id)];
+        if (!cp) return;
+        const changed = selectedParkId !== String(id);
+        selectedParkId = String(id);
+        nearbyRouteIndex = nearbyRouteCandidates.findIndex(item => item.id === selectedParkId);
+        if (nearbyRouteIndex < 0) { nearbyRouteCandidates.unshift({id:selectedParkId, name:cp.name}); nearbyRouteIndex = 0; }
+        if (changed) clearActiveRoute();
+        if (selectedMarker) selectedMarker.remove();
+        const el = document.createElement('button');
+        el.className = 'selected-park'; el.type = 'button';
+        el.textContent = cp.name;
+        el.setAttribute('aria-label', '已選取：' + cp.name);
+        el.addEventListener('click', event => { event.stopPropagation(); openNearby(); });
+        selectedMarker = new ParkingMapSDK.Marker({element:el, anchor:'bottom'}).setLngLat([cp.lon,cp.lat]).addTo(map);
+        const anchor = searchAnchor || {lat:cp.lat, lon:cp.lon, label:'地圖中心'};
+        renderResultCard(cp, haversine(anchor.lat,anchor.lon,cp.lat,cp.lon));
+        syncMarkerDensity();
+        updateNearbyRouteControls();
+        if (reveal) {
+          nearbyOpen = true; panelCollapsed = false; updatePanelLayout();
+          map.easeTo({center:[cp.lon,cp.lat], offset:window.innerWidth < 700 ? [0,-document.getElementById('nearby-panel').offsetHeight/2] : [180,0]});
+        }
+      }
+
+      function closeFilterSheet() {
+        document.getElementById('filter-sheet').classList.remove('open');
+        if (nearbyOpen && !panelCollapsed) document.querySelector('.filter-launch').focus();
+      }
+
 
       function haversine(lat1, lon1, lat2, lon2) {
         const R = 6371000;
@@ -1106,22 +1221,8 @@
         return m < 1000 ? Math.round(m) + 'm' : (m / 1000).toFixed(1) + 'km';
       }
 
-      function toggleNearbyPanel() {
-        nearbyOpen = true;
-        const panel = document.getElementById('nearby-panel');
-        panel.classList.add('open');
-        panel.classList.toggle('dark', darkMode);
-        buildNearbyList();
-      }
-
-      function togglePanelCollapsed() {
-        panelCollapsed = !panelCollapsed;
-        const panel = document.getElementById('nearby-panel');
-        const handle = document.getElementById('panel-handle');
-        panel.classList.toggle('collapsed', panelCollapsed);
-        handle.setAttribute('aria-expanded', String(!panelCollapsed));
-        handle.setAttribute('aria-label', panelCollapsed ? '展開導航面板' : '收起導航面板');
-      }
+      function toggleNearbyPanel() { openNearby(); }
+      function togglePanelCollapsed() { panelCollapsed = true; updatePanelLayout(); }
 
       function renderNearbyRouteStatus(message, type = '') {
         const status = document.getElementById('nearby-route-status');
@@ -1150,46 +1251,28 @@
       }
 
       function toggleFavoritesPanel() {
-        const parks = allCarParks.filter(cp => isFavorite(cp.car_park_id))
-          .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
-        toggleMenu(false);
-        if (parks.length === 0) {
-          renderNearbyRouteStatus('尚未收藏停車場。點選地圖標記後，可用愛心加入收藏。');
-          return;
-        }
-        nearbyRouteCandidates = parks.map(cp => ({ id: String(cp.car_park_id), name: cp.name, dist: 0 }));
-        nearbyRouteIndex = 0;
-        renderResultCard(parks[0], 0);
-        updateNearbyRouteControls();
+        toggleMenu(false); candidateMode = 'favorites'; selectedParkId = null;
+        nearbyOpen = true; panelCollapsed = false;
+        buildNearbyList(); updatePanelLayout();
       }
 
       function buildNearbyList() {
-        const center = map.getCenter();
-        const refLat = center.lat, refLng = center.lng;
-
-        // Filter to parks with availability in current mode
-        const available = filteredCarParks.filter(cp => {
-          const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
-          return avail > 0;
-        });
-
-        // Compute distance & sort
-        const withDist = available.map(cp => ({
-          cp, dist: haversine(refLat, refLng, cp.lat, cp.lon)
-        })).sort((a, b) => a.dist - b.dist).slice(0, 15);
-
-        const listEl = document.getElementById('nearby-list');
-        if (withDist.length === 0) {
-          resetNearbyRouteMode();
-          listEl.innerHTML = '<div class="nearby-empty">目前篩選條件下沒有可用停車場。請調整篩選或移動地圖。</div>';
+        if (!searchAnchor) { const c = map.getCenter(); searchAnchor = {lat:c.lat,lon:c.lng,label:'地圖中心'}; }
+        const parks = candidateMode === 'favorites' ? filteredCarParks.filter(cp => isFavorite(cp.car_park_id))
+          : filteredCarParks.filter(cp => (showMotorcycle ? cp.availableMotor : cp.availableSpaces) > 0);
+        const withDist = parks.map(cp => ({cp,dist:haversine(searchAnchor.lat,searchAnchor.lon,cp.lat,cp.lon)})).sort((a,b)=>a.dist-b.dist);
+        nearbyRouteCandidates = withDist.map(({cp,dist})=>({id:String(cp.car_park_id),name:cp.name,dist}));
+        document.querySelector('.nearby-title').textContent = candidateMode === 'favorites' ? '收藏停車場' : searchAnchor.label + '附近空位';
+        const retained = selectedParkId && filteredCarParks.find(cp => String(cp.car_park_id) === selectedParkId && (candidateMode !== 'favorites' || isFavorite(cp.car_park_id)));
+        if (!withDist.length && !retained) {
+          document.getElementById('result-extra').replaceChildren();
+          selectedParkId = null; if (selectedMarker) selectedMarker.remove(); selectedMarker = null;
+          resetNearbyRouteMode(); clearActiveRoute();
+          document.getElementById('nearby-list').innerHTML = '<div class="nearby-empty">' + (candidateMode === 'favorites' ? '目前沒有符合條件的收藏停車場。' : '此篩選條件下沒有空位，請調整篩選或搜尋其他區域。') + '</div>';
           return;
         }
-
-        nearbyRouteCandidates = withDist.map(({ cp, dist }) => ({ id: String(cp.car_park_id), name: cp.name, dist }));
-        if (nearbyRouteIndex < 0 || nearbyRouteIndex >= nearbyRouteCandidates.length) nearbyRouteIndex = 0;
-        updateNearbyRouteControls();
-        const selected = withDist[nearbyRouteIndex];
-        renderResultCard(selected.cp, selected.dist);
+        // Keep the selection stable across availability refreshes, including a newly full park.
+        selectPark(retained ? selectedParkId : nearbyRouteCandidates[0].id);
       }
 
       function renderResultCard(cp, distance) {
@@ -1197,15 +1280,27 @@
         const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
         const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
         const feature = cp.chargeStation && cp.chargeStation.total > 0 ? ' · 電動車 ' + cp.chargeStation.total + ' 格' : '';
-        const payment = cp.payex ? esc(cp.payex).slice(0, 44) : '費率請見詳情';
-        const etaMinutes = Math.max(1, Math.round(distance / 420));
+        const payment = cp.payex ? '收費規則請見詳情' : '費率資料未提供';
+        const distanceLabel = '距' + (searchAnchor ? searchAnchor.label : '地圖中心') + '直線 ' + formatDist(distance);
         document.getElementById('nearby-list').innerHTML = '<div class="result-card">'
           + '<div class="result-name">' + esc(cp.name) + '</div>'
-          + '<div class="result-available">' + (avail >= 0 ? avail + ' 個空位' : '車位狀態未知') + '</div>'
-          + '<div class="result-meta"><span>' + formatDist(distance) + '</span><span>約 ' + etaMinutes + ' 分鐘</span><span>' + payment + '</span></div>'
+          + '<div class="result-available" style="color:' + (avail > 0 ? '#168348' : '#a64b35') + '">' + (avail >= 0 ? avail + ' 個空位' : '車位狀態未知') + '</div>'
+          + '<div class="result-meta"><span>' + esc(distanceLabel) + '</span><span>' + payment + '</span></div>'
           + '<div class="result-secondary"><button type="button" onclick="toggleFavorite(\'' + favoriteJsArg(cp.car_park_id) + '\')">' + (isFavorite(cp.car_park_id) ? '♥ 已收藏' : '♡ 收藏') + '</button>'
           + '<button id="result-details-button" type="button" onclick="toggleResultDetails()">查看詳情</button></div>'
-          + '<div id="result-details" class="result-details">總車位 ' + total + ' 格' + feature + '<br>無障礙 ' + (cp.handicapFirst || 0) + ' 格 · 親子／孕婦 ' + (cp.pregnancyFirst || 0) + ' 格<br>' + (cp.address ? esc(cp.address) + '<br>' : '') + '資料更新於剛剛</div></div>';
+          + '<div id="result-details" class="result-details">總車位 ' + total + ' 格' + feature + '<br>無障礙 ' + (cp.handicapFirst || 0) + ' 格 · 親子／孕婦 ' + (cp.pregnancyFirst || 0) + ' 格<br>' + (cp.address ? esc(cp.address) + '<br>' : '') + (cp.payex ? esc(cp.payex) : '費率資料未提供') + '</div></div>';
+        const card = document.querySelector('.result-card');
+        const detail = card.querySelector('.result-details');
+        const capacity = value => value >= 0 ? value : '未知';
+        detail.innerHTML += '<br>汽車空位 ' + capacity(cp.availableSpaces) + '／' + cp.totalSpaces
+          + ' · 機車空位 ' + capacity(cp.availableMotor) + '／' + cp.totalMotor
+          + '<br>無障礙空位 ' + capacity(cp.availableHandicap) + ' · 親子／孕婦空位 ' + capacity(cp.availablePregnancy);
+        if (cp.chargeStation) detail.innerHTML += '<br>充電可用 ' + cp.chargeStation.available + '／' + cp.chargeStation.total
+          + (cp.chargeStation.sockets || []).map(socket => '<br>' + esc(socket.spot_abrv) + '：' + esc(socket.spot_status)).join('');
+        detail.innerHTML += '<button type="button" class="eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id)
+          + '" onclick="calculateEta(\'' + favoriteJsArg(cp.car_park_id) + '\')">規劃路線與估算時間</button>'
+          + '<div class="eta-result" data-eta-result-id="' + favoriteAttr(cp.car_park_id) + '" aria-live="polite" style="display:none"></div>';
+        document.getElementById('result-extra').replaceChildren(card.querySelector('.result-secondary'), card.querySelector('.result-details'));
       }
 
       function toggleResultDetails() {
@@ -1225,7 +1320,7 @@
         const nextIndex = nearbyRouteIndex + 1;
         if (nextIndex >= nearbyRouteCandidates.length) return;
         nearbyRouteIndex = nextIndex;
-        buildNearbyList();
+        selectPark(nearbyRouteCandidates[nextIndex].id, true);
       }
 
       async function routeToNearbyIndex(index) {
@@ -1255,20 +1350,7 @@
         if (cp) navigateTo(cp.lat, cp.lon);
       }
 
-      function flyToPark(id) {
-        const cp = carParkLookup[id];
-        if (!cp) return;
-        closeActiveParkingPopup();
-        nearbyOpen = true;
-        // Fly to park and open popup
-        map.flyTo({ center: [cp.lon, cp.lat], zoom: 17 });
-        map.once('moveend', () => {
-          // Ensure marker exists and open its popup
-          updateVisibleCarParks();
-          const marker = carParkMarkerMap[id];
-          if (marker) marker.togglePopup();
-        });
-      }
+      function flyToPark(id) { selectPark(id, true); }
 
       // --- Filtering ---
       function toggleFilter(type) {
@@ -1290,6 +1372,7 @@
         document.getElementById('filter-accessible').checked = filterAccessible;
         document.getElementById('filter-pregnancy').checked = filterPregnancy;
         document.getElementById('filter-sheet').classList.add('open');
+        document.getElementById('filter-available').focus();
       }
 
       function applyFilterSheet() {
@@ -1298,7 +1381,8 @@
         showMotorcycle = document.getElementById('filter-motorcycle').checked;
         filterAccessible = document.getElementById('filter-accessible').checked;
         filterPregnancy = document.getElementById('filter-pregnancy').checked;
-        document.getElementById('filter-sheet').classList.remove('open');
+        closeFilterSheet();
+        candidateMode = 'nearby'; selectedParkId = null;
         updateActiveChips();
         applyFilters();
       }
@@ -1321,18 +1405,20 @@
       }
 
       function locateUser() {
-        if (!navigator.geolocation) return;
+        if (!navigator.geolocation) { document.getElementById('map-hint').textContent = '此瀏覽器不支援定位，請搜尋目的地。'; return; }
         navigator.geolocation.getCurrentPosition(pos => {
           setUserLocation(pos.coords);
-          map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15 });
-          buildNearbyList();
+          searchAnchor = {...userLocation, label:'目前位置'}; candidateMode = 'nearby'; selectedParkId = null;
+          nearbyOpen = true; panelCollapsed = false;
+          buildNearbyList(); updatePanelLayout(); frameSearchResults();
+          document.getElementById('area-search').hidden = true;
+          document.getElementById('map-hint').textContent = '已依目前位置搜尋附近空位';
         }, () => {
           document.getElementById('map-hint').textContent = '請允許定位，或搜尋目的地以取得附近可用車位。';
         }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
       }
 
       function applyFilters() {
-        resetNearbyRouteMode();
         filteredCarParks = allCarParks.filter(cp => {
           const avail = showMotorcycle ? cp.availableMotor : cp.availableSpaces;
           const total = showMotorcycle ? cp.totalMotor : cp.totalSpaces;
@@ -1497,6 +1583,7 @@
       // --- Dark mode ---
       function toggleDarkMode() {
         darkMode = !darkMode;
+        document.querySelector('.app-shell').classList.toggle('dark', darkMode);
         document.getElementById('btn-dark').classList.toggle('active', darkMode);
         document.getElementById('search-wrap').classList.toggle('dark', darkMode);
         document.getElementById('nearby-panel').classList.toggle('dark', darkMode);
@@ -1524,7 +1611,9 @@
       function syncMarkerDensity() {
         const compact = map.getZoom() < DETAIL_PIN_ZOOM;
         Object.values(carParkMarkerMap).forEach(marker => {
-          marker.getElement().classList.toggle('is-compact', compact);
+          const element = marker.getElement();
+          element.classList.toggle('is-compact', compact);
+          element.hidden = element.dataset.parkId === selectedParkId;
         });
       }
 
@@ -1610,8 +1699,9 @@
           setupClusters();
           updateVisibleCarParks();
           updateStatus();
-          nearbyOpen = true;
-          toggleNearbyPanel();
+          document.getElementById('nearby-launch').disabled = false;
+          searchAnchor = userLocation ? {...userLocation,label:'目前位置'} : {lat:map.getCenter().lat,lon:map.getCenter().lng,label:'地圖中心'};
+          updatePanelLayout();
           document.getElementById('map-hint').textContent = userLocation
             ? '已依目前位置排序附近可用停車場' : '啟用定位後，可依你的距離排序附近空位';
           document.getElementById('loading').classList.add('hidden');
@@ -1630,6 +1720,11 @@
         if (!coords || !Number.isFinite(coords.latitude) || !Number.isFinite(coords.longitude)) return;
         userLocation = { lat: coords.latitude, lon: coords.longitude };
         etaCache.clear();
+        if (userLocationMarker) userLocationMarker.remove();
+        const dot = document.createElement('div');
+        dot.style.cssText = 'width:20px;height:20px;border:3px solid white;border-radius:50%;background:#1463ff;box-shadow:0 0 0 7px #1463ff33';
+        dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', '目前位置');
+        userLocationMarker = new ParkingMapSDK.Marker({element:dot}).setLngLat([userLocation.lon,userLocation.lat]).addTo(map);
       }
 
       function initMap(lat, lng, initialUserLocation = null) {
@@ -1641,37 +1736,30 @@
           style: MAP_STYLE_LIGHT
         });
         map.addControl(new ParkingMapSDK.NavigationControl());
-        const geolocateControl = new ParkingMapSDK.GeolocateControl({
-          positionOptions: { enableHighAccuracy: true },
-          trackUserLocation: true, showUserLocation: true
-        });
-        if (typeof geolocateControl.on === 'function') {
-          geolocateControl.on('geolocate', event => setUserLocation(event.coords));
-        }
-        map.addControl(geolocateControl);
-
         map.on('load', () => {
-          setTimeout(() => { const b = document.querySelector('.maplibregl-ctrl-geolocate'); if (b) b.click(); }, 500);
           loadData();
         });
         map.on('click', () => { closeSearchResults(); });
-        map.on('moveend', () => { updateVisibleCarParks(); if (nearbyOpen) buildNearbyList(); });
+        map.on('moveend', () => { updateVisibleCarParks(); });
+        map.on('movestart', event => { if (event.originalEvent) document.getElementById('area-search').hidden = false; });
         map.on('zoomend', updateVisibleCarParks);
         setInterval(refreshAvailability, AVAIL_TTL);
       }
 
       window.onload = function() {
-        const dLat = 25.033, dLng = 121.565;
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            pos => initMap(pos.coords.latitude, pos.coords.longitude, {
-              lat: pos.coords.latitude, lon: pos.coords.longitude
-            }),
-            () => initMap(dLat, dLng),
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-          );
-        } else { initMap(dLat, dLng); }
+        initMap(25.033, 121.565);
+        new ResizeObserver(updatePanelLayout).observe(document.getElementById('nearby-panel'));
+        window.addEventListener('resize', updatePanelLayout);
       };
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { closeSearchResults(); closeFilterSheet(); toggleMenu(false); }
+      });
+      document.getElementById('filter-sheet').addEventListener('click', event => {
+        if (event.target.id === 'filter-sheet') closeFilterSheet();
+      });
+      document.getElementById('menu-sheet').addEventListener('click', event => {
+        if (event.target.id === 'menu-sheet') toggleMenu(false);
+      });
     </script>
     </main>
   </body>
