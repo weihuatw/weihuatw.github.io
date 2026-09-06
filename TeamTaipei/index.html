@@ -351,6 +351,10 @@
       .result-details { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.6; }
       .result-details.open { display: block; }
       .nearby-route-status { margin: 0 18px 8px; }
+      .nearby-route-status.route-preview { margin-top: 0; padding: 9px 10px; font-size: 13px; }
+      .nearby-route-status .route-action { float: right; border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0 0 0 8px; }
+      .route-preview-button { width: 100%; min-height: 44px; margin-top: 10px; border: 1px solid #c9d8f2; border-radius: 12px; background: #f5f8ff; color: #245b93; font-weight: 750; cursor: pointer; }
+      .route-preview-button:hover { background: #e9f1ff; }
       .filter-launch { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 9px 12px; color: var(--text); font-weight: 700; cursor: pointer; }
       .active-chips { display: flex; gap: 7px; flex-wrap: wrap; padding: 0 18px 10px; }
       .active-chips:empty { display: none; }
@@ -500,6 +504,8 @@
       let userLocation = null;
       const etaCache = new Map();
       let activeRouteGeoJSON = null;
+      let routeRequestToken = 0;
+      let availabilityUpdatedAt = null;
 
       // Filter / display state
       let filterAvailable = false;
@@ -631,6 +637,7 @@
         }
         availCache.data = availMap;
         availCache.expires = now + AVAIL_TTL;
+        availabilityUpdatedAt = new Date(now);
         console.log(`Fetched availability for ${Object.keys(availMap).length} parks`);
         return availMap;
       }
@@ -784,7 +791,7 @@
 
         const etaId = favoriteJsArg(cp.car_park_id);
         h += '<button type="button" class="eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id) + '"'
-           + ' onclick="calculateEta(\'' + etaId + '\')">規劃路線與估算時間</button>';
+           + ' onclick="calculateEta(\'' + etaId + '\')">預覽路線</button>';
         h += '<div class="eta-result" data-eta-result-id="' + favoriteAttr(cp.car_park_id) + '"'
            + ' aria-live="polite" style="display:none"></div>';
 
@@ -858,7 +865,15 @@
         renderEtaMessage(id,
           '開車約 <b>' + formatDuration(eta.travelTimeInSeconds) + '</b> · '
           + formatDist(eta.lengthInMeters) + arrivalText
-          + '<button type="button" class="eta-clear-route" onclick="clearActiveRoute()">清除路線</button>', '');
+          + '<button type="button" class="eta-clear-route" onclick="cancelRoutePreview()">清除路線</button>', '');
+      }
+
+      function renderRoutePreviewMessage(message, type = '') {
+        const status = document.getElementById('nearby-route-status');
+        if (!status) return;
+        status.className = 'nearby-route-status route-preview' + (type ? ' ' + type : '');
+        status.innerHTML = message;
+        status.style.display = message ? 'block' : 'none';
       }
 
       function routeToGeoJSON(route) {
@@ -927,8 +942,10 @@
           minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng);
           minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
         });
+        const panel = document.getElementById('nearby-panel');
+        const panelBottom = panel && nearbyOpen && !panelCollapsed ? panel.getBoundingClientRect().height + 24 : 40;
         map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
-          padding: { top: 90, right: 45, bottom: 120, left: 45 },
+          padding: { top: 90, right: 45, bottom: Math.max(120, panelBottom), left: 45 },
           maxZoom: 16.5,
           duration: 600
         });
@@ -943,16 +960,28 @@
         }
       }
 
-      async function calculateRouteToPark(id) {
+      function cancelRoutePreview() {
+        routeRequestToken += 1;
+        nearbyRouteBusy = false;
+        clearActiveRoute();
+        if (selectedParkId) {
+          getEtaElements(selectedParkId).results.forEach(result => { result.style.display = 'none'; });
+        }
+        updateNearbyRouteControls();
+      }
+
+      async function calculateRouteToPark(id, requestToken = null) {
         const key = String(id);
         const cp = carParkLookup[key];
         if (!cp) throw new Error('找不到停車場資料。');
         if (!userLocation) throw new Error('請先允許定位，才能規劃目前位置到停車場的路線。');
 
         const cacheKey = userLocation.lat.toFixed(4) + ',' + userLocation.lon.toFixed(4) + ':' + key;
+        const token = requestToken == null ? ++routeRequestToken : requestToken;
         const cached = etaCache.get(cacheKey);
         clearActiveRoute();
         if (cached && cached.expires > Date.now()) {
+          if (token !== routeRequestToken) throw new Error('路線請求已更新。');
           if (cached.data.routeGeoJSON) showRoute(cached.data.routeGeoJSON);
           return cached.data;
         }
@@ -961,8 +990,9 @@
         const url = ROUTING_URL + locations + '/json?travelMode=car&departAt=now&key='
           + encodeURIComponent(API_KEY) + '&routeRepresentation=polyline';
         const response = await fetch(url);
-        if (!response.ok) throw new Error('Routing request failed: ' + response.status);
+        if (!response.ok) throw new Error('目前無法取得路線，請稍後再試。');
         const payload = await response.json();
+        if (token !== routeRequestToken) throw new Error('路線請求已更新。');
         const route = payload.routes && payload.routes[0];
         const summary = route && route.summary;
         if (!summary || !Number.isFinite(summary.travelTimeInSeconds)) {
@@ -980,25 +1010,49 @@
       }
 
       async function calculateEta(id) {
+        return previewSelectedRoute(id);
+      }
+
+      async function previewSelectedRoute(id = selectedParkId, syncSelection = true) {
         const key = String(id);
-        const elements = getEtaElements(key);
+        let elements = getEtaElements(key);
         if (!carParkLookup[key]) return;
+        if (syncSelection && selectedParkId !== key) {
+          selectPark(key, false, false);
+          elements = getEtaElements(key);
+        }
+        if (!userLocation) {
+          renderRoutePreviewMessage('啟用定位後，才能預覽目前位置到這個停車場的行車路線。', 'error');
+          return;
+        }
+        selectedParkId = key;
+        const token = ++routeRequestToken;
+        nearbyRouteBusy = true;
+        updateNearbyRouteControls();
         elements.buttons.forEach(button => {
           button.disabled = true;
-          button.textContent = '規劃中…';
+          button.textContent = '路線規劃中…';
         });
-        renderEtaMessage(key, '正在計算行車時間…', 'loading');
+        renderRoutePreviewMessage('正在計算到 <b>' + String(carParkLookup[key].name).replace(/</g, '&lt;').replace(/>/g, '&gt;') + ' 的行車路線…', 'loading');
         try {
-          const data = await calculateRouteToPark(key);
+          const data = await calculateRouteToPark(key, token);
+          if (token !== routeRequestToken) return;
           renderEtaResult(key, data);
+          const arrival = formatEtaTime(data.arrivalTime);
+          renderRoutePreviewMessage('預覽路線：開車約 <b>' + formatDuration(data.travelTimeInSeconds) + '</b> · ' + formatDist(data.lengthInMeters)
+            + (arrival ? ' · 預計 ' + arrival + ' 抵達' : '')
+            + '<button type="button" class="route-action" onclick="cancelRoutePreview()">清除路線</button>');
         } catch (err) {
+          if (token !== routeRequestToken) return;
           console.error('ETA calculation failed:', err);
-          renderEtaMessage(key, err.message || '目前無法取得路線，請稍後再試。', 'error');
+          renderRoutePreviewMessage(err.message || '目前無法取得路線，請稍後再試。', 'error');
         } finally {
+          if (token === routeRequestToken) nearbyRouteBusy = false;
           elements.buttons.forEach(button => {
             button.disabled = false;
-            button.textContent = '規劃路線與估算時間';
+            button.textContent = '預覽路線';
           });
+          updateNearbyRouteControls();
         }
       }
 
@@ -1174,18 +1228,18 @@
         if (selectedMarker) selectedMarker.remove();
         selectedMarker = null;
         syncMarkerDensity();
-        resetNearbyRouteMode(); clearActiveRoute();
+        resetNearbyRouteMode(); cancelRoutePreview();
         nearbyOpen = false; panelCollapsed = true; updatePanelLayout();
       }
 
-      function selectPark(id, reveal = false) {
+      function selectPark(id, reveal = false, autoRoute = true) {
         const cp = carParkLookup[String(id)];
         if (!cp) return;
         const changed = selectedParkId !== String(id);
         selectedParkId = String(id);
         nearbyRouteIndex = nearbyRouteCandidates.findIndex(item => item.id === selectedParkId);
         if (nearbyRouteIndex < 0) { nearbyRouteCandidates.unshift({id:selectedParkId, name:cp.name}); nearbyRouteIndex = 0; }
-        if (changed) clearActiveRoute();
+        if (changed) cancelRoutePreview();
         if (selectedMarker) selectedMarker.remove();
         const el = document.createElement('button');
         el.className = 'selected-park'; el.type = 'button';
@@ -1197,6 +1251,7 @@
         renderResultCard(cp, haversine(anchor.lat,anchor.lon,cp.lat,cp.lon));
         syncMarkerDensity();
         updateNearbyRouteControls();
+        if (changed && userLocation && autoRoute) previewSelectedRoute(selectedParkId, false);
         if (reveal) {
           nearbyOpen = true; panelCollapsed = false; updatePanelLayout();
           map.easeTo({center:[cp.lon,cp.lat], offset:window.innerWidth < 700 ? [0,-document.getElementById('nearby-panel').offsetHeight/2] : [180,0]});
@@ -1267,7 +1322,7 @@
         if (!withDist.length && !retained) {
           document.getElementById('result-extra').replaceChildren();
           selectedParkId = null; if (selectedMarker) selectedMarker.remove(); selectedMarker = null;
-          resetNearbyRouteMode(); clearActiveRoute();
+          resetNearbyRouteMode(); cancelRoutePreview();
           document.getElementById('nearby-list').innerHTML = '<div class="nearby-empty">' + (candidateMode === 'favorites' ? '目前沒有符合條件的收藏停車場。' : '此篩選條件下沒有空位，請調整篩選或搜尋其他區域。') + '</div>';
           return;
         }
@@ -1287,18 +1342,19 @@
           + '<div class="result-available" style="color:' + (avail > 0 ? '#168348' : '#a64b35') + '">' + (avail >= 0 ? avail + ' 個空位' : '車位狀態未知') + '</div>'
           + '<div class="result-meta"><span>' + esc(distanceLabel) + '</span><span>' + payment + '</span></div>'
           + '<div class="result-secondary"><button type="button" onclick="toggleFavorite(\'' + favoriteJsArg(cp.car_park_id) + '\')">' + (isFavorite(cp.car_park_id) ? '♥ 已收藏' : '♡ 收藏') + '</button>'
-          + '<button id="result-details-button" type="button" onclick="toggleResultDetails()">查看詳情</button></div>'
-          + '<div id="result-details" class="result-details">總車位 ' + total + ' 格' + feature + '<br>無障礙 ' + (cp.handicapFirst || 0) + ' 格 · 親子／孕婦 ' + (cp.pregnancyFirst || 0) + ' 格<br>' + (cp.address ? esc(cp.address) + '<br>' : '') + (cp.payex ? esc(cp.payex) : '費率資料未提供') + '</div></div>';
+          + '<button id="result-details-button" type="button" aria-expanded="false" aria-controls="result-details" onclick="toggleResultDetails()">查看詳情</button></div>'
+          + '<div id="result-details" class="result-details" role="region" aria-label="' + esc(cp.name) + '詳細資訊">總車位 ' + total + ' 格' + feature + '<br>無障礙 ' + (cp.handicapFirst || 0) + ' 格 · 親子／孕婦 ' + (cp.pregnancyFirst || 0) + ' 格<br>' + (cp.address ? esc(cp.address) + '<br>' : '') + (cp.payex ? esc(cp.payex) : '費率資料未提供') + '</div></div>';
         const card = document.querySelector('.result-card');
         const detail = card.querySelector('.result-details');
         const capacity = value => value >= 0 ? value : '未知';
         detail.innerHTML += '<br>汽車空位 ' + capacity(cp.availableSpaces) + '／' + cp.totalSpaces
           + ' · 機車空位 ' + capacity(cp.availableMotor) + '／' + cp.totalMotor
-          + '<br>無障礙空位 ' + capacity(cp.availableHandicap) + ' · 親子／孕婦空位 ' + capacity(cp.availablePregnancy);
+          + '<br>無障礙空位 ' + capacity(cp.availableHandicap) + ' · 親子／孕婦空位 ' + capacity(cp.availablePregnancy)
+          + '<br>車位更新於 ' + (availabilityUpdatedAt ? availabilityUpdatedAt.toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'}) : '時間未知');
         if (cp.chargeStation) detail.innerHTML += '<br>充電可用 ' + cp.chargeStation.available + '／' + cp.chargeStation.total
           + (cp.chargeStation.sockets || []).map(socket => '<br>' + esc(socket.spot_abrv) + '：' + esc(socket.spot_status)).join('');
-        detail.innerHTML += '<button type="button" class="eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id)
-          + '" onclick="calculateEta(\'' + favoriteJsArg(cp.car_park_id) + '\')">規劃路線與估算時間</button>'
+        detail.innerHTML += '<button type="button" class="route-preview-button eta-button" data-eta-button-id="' + favoriteAttr(cp.car_park_id)
+          + '" onclick="previewSelectedRoute(\'' + favoriteJsArg(cp.car_park_id) + '\')">預覽路線</button>'
           + '<div class="eta-result" data-eta-result-id="' + favoriteAttr(cp.car_park_id) + '" aria-live="polite" style="display:none"></div>';
         document.getElementById('result-extra').replaceChildren(card.querySelector('.result-secondary'), card.querySelector('.result-details'));
       }
@@ -1309,6 +1365,7 @@
         if (!details || !button) return;
         const open = details.classList.toggle('open');
         button.textContent = open ? '收起詳情' : '查看詳情';
+        button.setAttribute('aria-expanded', String(open));
       }
 
       async function routeToFirstAvailable() {
@@ -1334,7 +1391,7 @@
           const eta = await calculateRouteToPark(candidate.id);
           renderNearbyRouteStatus('已規劃到 <b>' + candidate.name.replace(/</g, '&lt;').replace(/>/g, '&gt;')
             + '</b> · ' + formatDuration(eta.travelTimeInSeconds) + ' · ' + formatDist(eta.lengthInMeters)
-            + '<button type="button" class="eta-clear-route" onclick="clearActiveRoute()">清除路線</button>');
+            + '<button type="button" class="eta-clear-route" onclick="cancelRoutePreview()">清除路線</button>');
         } catch (err) {
           console.error('Nearby route calculation failed:', err);
           renderNearbyRouteStatus(err.message || '目前無法取得路線，請稍後再試。', 'error');
